@@ -7,15 +7,26 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "test": "node --test test-remote-provision.mjs test-remote-state.mjs test-remote-regressions.mjs"
+    "test": "node --test test-earendil-upgrade.mjs test-remote-provision.mjs test-remote-state.mjs test-remote-regressions.mjs"
+  },
+  "overrides": {
+    "@earendil-works/pi-client": {
+      "@earendil-works/chord": "1.1.0"
+    },
+    "@earendil-works/pi-server": {
+      "@earendil-works/chord": "1.1.0"
+    },
+    "@earendil-works/pi-protocol": {
+      "@earendil-works/chord": "1.1.0"
+    }
   },
   "dependencies": {
-    "@earendil-works/chord": "^1.0.3",
-    "@earendil-works/pi-ai": "^1.0.3",
-    "@earendil-works/pi-client": "^1.0.3",
-    "@earendil-works/pi-coding-agent": "^1.0.3",
-    "@earendil-works/pi-durable": "^1.0.3",
-    "@earendil-works/pi-server": "^1.0.3",
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-client": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/pi-server": "1.1.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "ws": "^8.18.3"

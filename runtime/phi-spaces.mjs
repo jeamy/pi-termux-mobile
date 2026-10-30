@@ -249,16 +249,16 @@ function writeMember(p, table, entry, now, maxAgeMs = 6e4) {
       throw new RoutingConflict("HRW key field missing");
     id3 = hrw(entry.fields[r.by.field], r.members);
   } else {
-    const candidates = r.members.map((id4) => table[id4]).filter((m2) => m2.state === "active");
+    const candidates2 = r.members.map((id4) => table[id4]).filter((m2) => m2.state === "active");
     if (r.by === "capacity") {
-      if (candidates.some((m2) => !m2.capacity || !Number.isFinite(m2.capacity.free) || m2.capacity.free < 0 || !Number.isSafeInteger(m2.capacity.at) || now - m2.capacity.at > maxAgeMs || m2.capacity.at > now + 2e3))
+      if (candidates2.some((m2) => !m2.capacity || !Number.isFinite(m2.capacity.free) || m2.capacity.free < 0 || !Number.isSafeInteger(m2.capacity.at) || now - m2.capacity.at > maxAgeMs || m2.capacity.at > now + 2e3))
         throw new CapacityUnavailable("capacity observations stale/missing");
-      const free = candidates.filter((m2) => m2.capacity.free > 0).sort((a, b) => b.capacity.free - a.capacity.free || a.id.localeCompare(b.id));
+      const free = candidates2.filter((m2) => m2.capacity.free > 0).sort((a, b) => b.capacity.free - a.capacity.free || a.id.localeCompare(b.id));
       if (!free.length)
         throw new CapacityUnavailable("no available capacity");
       id3 = free[0].id;
     } else {
-      const capable = candidates.filter((m2) => m2.capabilities && now - m2.capabilities.at <= maxAgeMs && m2.capabilities.at <= now + 2e3 && m2.capabilities.names.includes(r.capability)).sort((a, b) => a.id.localeCompare(b.id));
+      const capable = candidates2.filter((m2) => m2.capabilities && now - m2.capabilities.at <= maxAgeMs && m2.capabilities.at <= now + 2e3 && m2.capabilities.names.includes(r.capability)).sort((a, b) => a.id.localeCompare(b.id));
       if (!capable.length)
         throw new NoCapableMember("no fresh capable member");
       id3 = capable[0].id;
@@ -458,6 +458,7 @@ function touch(s, now, maxLogBytes) {
     s.stream.bytes -= bytesOf(old) + 1;
     s.stream.log.splice(0, 1);
   }
+  if (s.stream.log.length === 1 && s.stream.bytes > maxLogBytes) s.stream.bytes = exact(s.stream);
 }
 function record(s, now, op, maxLogBytes) {
   touch(s, now, maxLogBytes);
@@ -466,12 +467,12 @@ function record(s, now, op, maxLogBytes) {
   const batch = st.log[o.rev - st.log[0].rev];
   const prev = o.at.get(op.id);
   if (prev !== void 0) {
-    st.bytes += opBytes(op) - opBytes(batch.ops[prev]);
+    st.bytes += bytesOf(op) - bytesOf(batch.ops[prev]);
     batch.ops[prev] = op;
   } else {
     o.at.set(op.id, batch.ops.length);
+    st.bytes += opBytes(op, batch.ops.length === 0);
     batch.ops.push(op);
-    st.bytes += opBytes(op);
   }
   let drop = 0;
   while (st.bytes > maxLogBytes && drop < st.log.length - 1) {
@@ -481,6 +482,7 @@ function record(s, now, op, maxLogBytes) {
     drop++;
   }
   if (drop > 0) st.log.splice(0, drop);
+  if (st.log.length === 1 && st.bytes > maxLogBytes) st.bytes = exact(st);
 }
 function collect(s, afterRev, cap, overhead) {
   const st = s.stream ?? { rev: 0, floor: 0, bytes: 0, log: [] };
@@ -500,13 +502,14 @@ function collect(s, afterRev, cap, overhead) {
   }
   return { batches, next: batches.length ? batches[batches.length - 1].rev : afterRev };
 }
-var bytesOf, opBytes, open, seal, revisionOf;
+var bytesOf, opBytes, exact, open, seal, revisionOf;
 var init_stream = __esm({
   "src/stream.ts"() {
     "use strict";
     init_json();
     bytesOf = jsonBytes;
-    opBytes = (o) => bytesOf(o) + 1;
+    opBytes = (o, first) => bytesOf(o) + (first ? 0 : 1);
+    exact = (st) => st.log.reduce((n, b) => n + bytesOf(b) + 1, 0);
     open = /* @__PURE__ */ new WeakMap();
     seal = (s) => {
       open.delete(s);
@@ -516,11 +519,25 @@ var init_stream = __esm({
 });
 
 // src/store/types.ts
-var DISK_MAP, diskMapOf;
+function committedArray(v) {
+  if (published.has(v)) return v;
+  return v[COMMITTED];
+}
+function deepFreeze(v) {
+  if (typeof v !== "object" || v === null || Object.isFrozen(v)) return;
+  Object.freeze(v);
+  for (const x of Object.values(v)) deepFreeze(x);
+}
+var DISK_MAP, COMMITTED, published, markCommitted, diskMapOf;
 var init_types = __esm({
   "src/store/types.ts"() {
     "use strict";
     DISK_MAP = Symbol.for("phi-spaces.disk-map");
+    COMMITTED = Symbol("phi-spaces.committed");
+    published = /* @__PURE__ */ new WeakSet();
+    markCommitted = (a) => {
+      published.add(a);
+    };
     diskMapOf = (m) => typeof m === "object" && m !== null ? m[DISK_MAP] : void 0;
   }
 });
@@ -609,7 +626,7 @@ function decide(s, now, key2, outcome) {
   if (c.reservedResultBytes !== void 0 && resultBytes > c.reservedResultBytes) throw new LimitError("the result exceeds its admission reservation");
   st.reservedBytes = Math.max(0, (st.reservedBytes ?? 0) - (c.reservedResultBytes ?? 0));
   const { reservedResultBytes: _reserved, ...rest } = c;
-  const next = { ...rest, state: outcome.state, result: outcome.state === "done" ? outcome.result : null, decidedAt: now, ...outcome.state === "done" && outcome.error ? { error: outcome.error } : {} };
+  const next = { ...rest, state: outcome.state, result: outcome.state === "done" ? outcome.result : null, decidedAt: now, ...outcome.state === "done" && outcome.error ? { error: outcome.error } : {}, ...outcome.state === "done" && outcome.locked ? { locked: true } : {} };
   st.claims[key2] = next;
   dueAt(st, now + limitsOf(s).claimResultMs);
   st.bytes += bytesOf2(next) - before;
@@ -621,7 +638,7 @@ function lookup(s, r, now) {
   const c = s.rpc?.claims[key2] ?? historical;
   if (!c) throw new RequestExpired(`request ${r.requestId} is unknown`);
   const expired = c.resultExpired || c.state !== "pending" && c.decidedAt !== void 0 && c.decidedAt + limitsOf(s).claimResultMs <= now;
-  return { state: c.state, deadline: c.deadline, method: c.method, ...c.orphanedAfterRestore ? { orphanedAfterRestore: c.orphanedAfterRestore } : {}, ...historical ? { restoredHistory: true, ...c.state === "pending" ? { unknownOutcome: true } : {} } : {}, ...c.error ? { error: c.error } : {}, ...expired ? { resultExpired: true } : c.state === "pending" ? {} : { result: c.result ?? null } };
+  return { state: c.state, deadline: c.deadline, method: c.method, ...c.orphanedAfterRestore ? { orphanedAfterRestore: c.orphanedAfterRestore } : {}, ...historical ? { restoredHistory: true, ...c.state === "pending" ? { unknownOutcome: true } : {} } : {}, ...c.error ? { error: c.error } : {}, ...expired ? { resultExpired: true } : c.state === "pending" ? {} : { result: c.result ?? null, ...c.locked ? { locked: true } : {} } };
 }
 function cancelRequest(s, now, target) {
   sweep(s, now);
@@ -996,7 +1013,6 @@ __export(core_exports, {
   MAX_LIST: () => MAX_LIST,
   MAX_TIMER_MS: () => MAX_TIMER_MS,
   NO_WAIT: () => NO_WAIT,
-  PAGE_OVERHEAD: () => PAGE_OVERHEAD,
   PermissionError: () => PermissionError,
   ReplicaConfigPending: () => ReplicaConfigPending,
   ResourceExhausted: () => ResourceExhausted,
@@ -1006,9 +1022,11 @@ __export(core_exports, {
   SnapshotExpired: () => SnapshotExpired,
   StalePolicyVersion: () => StalePolicyVersion,
   TransactionError: () => TransactionError,
+  UniqueConflict: () => UniqueConflict,
   UnknownLeaseError: () => UnknownLeaseError,
   abortTxn: () => abortTxn,
   addWaiter: () => addWaiter,
+  announce: () => announce,
   applyRunGate: () => applyRunGate,
   assertAdminIdle: () => assertAdminIdle,
   assertGatedProfilesKept: () => assertGatedProfilesKept,
@@ -1039,6 +1057,7 @@ __export(core_exports, {
   needsMaintenance: () => needsMaintenance,
   nextExpiry: () => nextExpiry,
   notify: () => notify,
+  outboxBytes: () => outboxBytes,
   overheadBytes: () => overheadBytes,
   parkOperation: () => parkOperation,
   plain: () => plain,
@@ -1121,7 +1140,14 @@ function setLimits(s, l, now = Date.now()) {
   return limitsOf(s);
 }
 function overheadBytes(s) {
-  return jsonBytes(s.adminMaintenance ?? {}) + jsonBytes(s.membership ?? {}) + Object.values(s.txns).reduce((n, t) => n + (t.completion?.remainingBytes ?? 0), 0) + jsonBytes(s.authorityTransition ?? {}) + jsonBytes(s.authorityCounters ?? {}) + (s.restore ? jsonBytes(s.restore) : 0) + claimBytes(s) + (s.stream?.bytes ?? 0) + jsonBytes(s.outbox) + jsonBytes(s.waiters) + jsonBytes(s.regs) + jsonBytes(s.txns) + jsonBytes(s.jobs ?? []) + mailboxesBytes(s) + jsonBytes(s.runGates ?? {});
+  return jsonBytes(s.adminMaintenance ?? {}) + jsonBytes(s.membership ?? {}) + Object.values(s.txns).reduce((n, t) => n + (t.completion?.remainingBytes ?? 0), 0) + jsonBytes(s.authorityTransition ?? {}) + jsonBytes(s.authorityCounters ?? {}) + (s.restore ? jsonBytes(s.restore) : 0) + claimBytes(s) + (s.stream?.bytes ?? 0) + outboxBytes(s) + jsonBytes(s.waiters) + jsonBytes(s.regs) + jsonBytes(s.txns) + jsonBytes(s.jobs ?? []) + mailboxesBytes(s) + jsonBytes(s.runGates ?? {});
+}
+function outboxBytes(s) {
+  return s.outboxBytes ?? jsonBytes(s.outbox);
+}
+function pushOutbox(s, event) {
+  s.outboxBytes = outboxBytes(s) + jsonBytes(event) + 1;
+  s.outbox.push(event);
 }
 function mailboxesBytes(s) {
   if (!s.mailboxes) return 2;
@@ -1164,17 +1190,17 @@ function refreshReservations(s, extra = {}) {
       for (const id3 of [e.writtenUnder, e.takenBy]) if (id3 !== null) recount.add(id3);
     }
   }
-  const published = /* @__PURE__ */ new Map();
+  const published2 = /* @__PURE__ */ new Map();
   if (recount.size) for (const e of s.entries) {
     if (e.writtenUnder === e.takenBy) continue;
     if (!(e.writtenUnder !== null && recount.has(e.writtenUnder)) && !(e.takenBy !== null && recount.has(e.takenBy))) continue;
     const cost = publishCost(preview, e);
-    for (const id3 of [e.writtenUnder, e.takenBy]) if (id3 !== null) published.set(id3, (published.get(id3) ?? 0) + cost);
+    for (const id3 of [e.writtenUnder, e.takenBy]) if (id3 !== null) published2.set(id3, (published2.get(id3) ?? 0) + cost);
   }
   for (const t of Object.values(s.txns)) {
     let cost = t.reserved ?? 0;
     if (recount.has(t.id)) {
-      let full = published.get(t.id) ?? 0;
+      let full = published2.get(t.id) ?? 0;
       for (const r of preview.regs) if (r.txn === t.id) full += jsonBytes(r.handback) + 512;
       cost = Math.max(full, cost);
     }
@@ -1199,14 +1225,14 @@ function queueEvent(s, now, event, consumer, completing = false) {
     if (pendingFanout(s, consumer, event.target)) throw new ResourceExhausted("the consumer has a pending durable fanout backlog");
     if (consumer) appendMail(s, consumer, event, now);
     else {
-      if (jsonBytes(s.outbox) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) throw new ResourceExhausted("the local outbox is full");
-      s.outbox.push(event);
+      if (outboxBytes(s) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) throw new ResourceExhausted("the local outbox is full");
+      pushOutbox(s, event);
       touch2(s, now);
     }
     return;
   }
-  if (!consumer && jsonBytes(s.outbox) + jsonBytes(event) + 1 <= limitsOf(s).maxOutboxBytes && !pendingFanout(s, void 0, event.target)) {
-    s.outbox.push(clone(event));
+  if (!consumer && outboxBytes(s) + jsonBytes(event) + 1 <= limitsOf(s).maxOutboxBytes && !pendingFanout(s, void 0, event.target)) {
+    pushOutbox(s, clone(event));
     touch2(s, now);
     return;
   }
@@ -1221,7 +1247,7 @@ function runJobs(s, now) {
       const { event, consumer } = job.events[job.cursor];
       try {
         if (consumer) assertMailboxCapacity(s, consumer, event, now);
-        else if (jsonBytes(s.outbox) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) {
+        else if (outboxBytes(s) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) {
           job.retryAt = coreJobRetry(now);
           break;
         }
@@ -1231,7 +1257,7 @@ function runJobs(s, now) {
         }
         charge(s, jsonBytes(event) + EVENT_OVERHEAD);
         if (consumer) appendMail(s, consumer, event, now);
-        else s.outbox.push(clone(event));
+        else pushOutbox(s, clone(event));
         touch2(s, now);
         delete job.retryAt;
       } catch (e) {
@@ -1256,7 +1282,7 @@ function reserve(s, txn, cost, lim) {
 }
 function checkOutbox(s) {
   const lim = limitsOf(s);
-  if (s.outbox.length > 0 && jsonBytes(s.outbox) > lim.maxOutboxBytes) throw new LimitError(`${lim.maxOutboxBytes} bytes of events wait for delivery; try again later`);
+  if (s.outbox.length > 0 && outboxBytes(s) > lim.maxOutboxBytes) throw new LimitError(`${lim.maxOutboxBytes} bytes of events wait for delivery; try again later`);
 }
 function checkSize(what, v, lim) {
   const n = jsonBytes(v);
@@ -1280,6 +1306,18 @@ function deepEqual(a, b) {
   const ka = Object.keys(a);
   const kb = Object.keys(b);
   return ka.length === kb.length && ka.every((k) => k in b && deepEqual(a[k], b[k]));
+}
+function candidates(s, t, walk) {
+  if (t == null || t.type == null) return s.entries;
+  const base = committedArray(s.entries);
+  if (!base) return s.entries;
+  let buckets = typeBuckets.get(base);
+  const known = buckets?.get(t.type);
+  if (known || !walk) return known ?? s.entries;
+  const bucket = base.filter((e) => e.types.includes(t.type));
+  if (!buckets) typeBuckets.set(base, buckets = /* @__PURE__ */ new Map());
+  buckets.set(t.type, bucket);
+  return bucket;
 }
 function matches(t, e) {
   if (t === null) return true;
@@ -1399,12 +1437,34 @@ function expire(s, at) {
     }
     charge(s, cost);
     if (w.claimKey) {
-      if (s.rpc?.claims[w.claimKey]?.state === "pending") decide(s, at, w.claimKey, { state: "done", result: null });
+      if (s.rpc?.claims[w.claimKey]?.state === "pending") decide(s, at, w.claimKey, { state: "done", result: null, ...find(s, w.template, w.requestTxn ?? null, w.take).status === "locked" ? { locked: true } : {} });
     } else queueEvent(s, at, { kind: "timeout", eventId: w.id, seq: 1, handback: w.handback, target: w.target }, w.consumer, true);
-    s.waiters.splice(s.waiters.indexOf(w), 1);
+    dropWaiter(s, w);
     touch2(s, at);
   }
   return true;
+}
+function announce(s, now, entry, txn, as) {
+  assertNotArchived(s);
+  assertMemberAdmission(s, "write");
+  settle(s, now);
+  if (typeof entry?.type !== "string" || entry.type === "") throw new IllegalArgumentError("entry needs a type");
+  if (entry.fields === null || typeof entry.fields !== "object" || Array.isArray(entry.fields)) throw new IllegalArgumentError("entry fields must be an object");
+  if (directoryEntry(entry)) throw new PermissionError("directory entries require trusted publication");
+  if (txn !== null) requireTxn(s, txn, as);
+  const lim = limitsOf(s);
+  if (as !== void 0) {
+    if (entry.type.length > lim.maxTypeChars) throw new LimitError(`type name longer than ${lim.maxTypeChars} characters`);
+    if ((entry.types?.length ?? 0) + 1 > lim.maxTypes) throw new LimitError(`more than ${lim.maxTypes} types`);
+    for (const t of entry.types ?? []) if (typeof t !== "string" || t.length > lim.maxTypeChars) throw new LimitError("bad or too long supertype name");
+  }
+  checkSize("entry", entry.fields, lim);
+  const rec = { id: peekId(s, "e"), type: entry.type, types: [.../* @__PURE__ */ new Set([entry.type, ...entry.types ?? []])], fields: clone(entry.fields), expires: now, writtenUnder: null, takenBy: null, readBy: [], owner: as ?? null };
+  s.nextId++;
+  touch2(s, now);
+  if (txn === null) record(s, now, transientOp(rec), lim.maxLogBytes);
+  else (s.txns[txn].announced ??= []).push(rec);
+  return { id: rec.id, expires: now };
 }
 function write(s, now, entry, txn, lease, as) {
   assertNotArchived(s);
@@ -1442,8 +1502,7 @@ function write(s, now, entry, txn, lease, as) {
   };
   rec.size = jsonBytes(entry.fields);
   const lim = limitsOf(s);
-  let used = rec.size;
-  for (const e of s.entries) used += e.size ?? jsonBytes(e.fields);
+  const used = rec.size + entryBytes(s);
   if (used > lim.maxSpaceBytes) throw new LimitError(`the space would exceed ${lim.maxSpaceBytes} bytes`);
   if (used + overheadBytes(s) > lim.maxDocBytes) throw new LimitError(`the space document would exceed ${lim.maxDocBytes} bytes`);
   if (expires <= now) {
@@ -1489,7 +1548,7 @@ function preflightFanout(s, rec, txn, now) {
     for (const w of s.waiters) if (!w.claimKey && matches(w.template, rec)) add({ kind: "waiter", eventId: w.id, seq: 1, handback: w.handback, target: w.target, entry }, w.consumer);
   }
   for (const group of consumers.values()) assertMailboxBatch(s, group.principal, group.events, now);
-  if (jsonBytes(s.outbox) + local.reduce((n, e) => n + jsonBytes(e) + 1, 0) > limitsOf(s).maxOutboxBytes) throw new ResourceExhausted("the local outbox cannot hold this fanout");
+  if (outboxBytes(s) + local.reduce((n, e) => n + jsonBytes(e) + 1, 0) > limitsOf(s).maxOutboxBytes) throw new ResourceExhausted("the local outbox cannot hold this fanout");
 }
 function emit(s, r, e, count2, now, completing = false) {
   r.seq++;
@@ -1529,7 +1588,7 @@ function probe(s, now, tmpl2, txn, take, as) {
 }
 function find(s, tmpl2, txn, take) {
   let locked = false;
-  for (const e of s.entries) {
+  for (const e of candidates(s, tmpl2, false)) {
     if (!matches(tmpl2, e) || e.restoredUnverified && (take || txn !== null)) continue;
     if (take) {
       const run = runOf(s, e.types, e.fields);
@@ -1596,7 +1655,7 @@ function createTxn(s, now, lease, as) {
   if (as !== void 0 && Object.values(s.txns).filter(ownedBy(as)).length >= limitsOf(s).maxTxnsPerOwner) throw new LimitError(`you already have ${limitsOf(s).maxTxnsPerOwner} open transactions`);
   const t = { id: newId(s, "t"), expires: grant(lease, now), owner: as ?? null };
   initializeMemberTxn(s, t, now);
-  if (t.completion && s.entries.reduce((n, e) => n + (e.size ?? jsonBytes(e.fields)), 0) + overheadBytes(s) + t.completion.remainingBytes + jsonBytes(t) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("completion reservation exceeds Member document budget");
+  if (t.completion && entryBytes(s) + overheadBytes(s) + t.completion.remainingBytes + jsonBytes(t) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("completion reservation exceeds Member document budget");
   s.txns[t.id] = t;
   touch2(s, now);
   return { id: t.id, expires: t.expires };
@@ -1682,20 +1741,20 @@ function serve(s, now) {
     if (w.claimKey) {
       const claim = s.rpc?.claims[w.claimKey];
       if (!claim || claim.state !== "pending") {
-        s.waiters.splice(s.waiters.indexOf(w), 1);
+        dropWaiter(s, w);
         continue;
       }
       if (w.authorizedUntil !== void 0 && now >= w.authorizedUntil) {
         if (w.deadline <= now) {
           decide(s, now, w.claimKey, { state: "done", result: null });
-          s.waiters.splice(s.waiters.indexOf(w), 1);
+          dropWaiter(s, w);
         }
         continue;
       }
       const txn = w.requestTxn ?? null;
       if (txn !== null && !active(s, txn, now)) {
         decide(s, now, w.claimKey, { state: "done", result: null, error: { code: "TransactionError", message: `transaction ${txn} is not active` } });
-        s.waiters.splice(s.waiters.indexOf(w), 1);
+        dropWaiter(s, w);
         continue;
       }
       const found = find(s, w.template, txn, w.take);
@@ -1703,7 +1762,7 @@ function serve(s, now) {
       if (found.status === "found") {
         if (directoryEntry(found.rec) && w.target !== null && (w.take || txn !== null)) {
           decide(s, now, w.claimKey, { state: "done", result: null, error: { code: "PermissionDenied", message: "directory entries cannot be consumed or locked" } });
-          s.waiters.splice(s.waiters.indexOf(w), 1);
+          dropWaiter(s, w);
           continue;
         }
         if (w.take) {
@@ -1716,7 +1775,7 @@ function serve(s, now) {
         }
         if (w.take && txn === null && (s.completionProfiles ?? []).some((p) => found.rec.types.includes(p.taskType))) {
           decide(s, now, w.claimKey, { state: "done", result: null, error: { code: "CompletionViolation", message: "profiled tasks require a transaction" } });
-          s.waiters.splice(s.waiters.indexOf(w), 1);
+          dropWaiter(s, w);
           continue;
         }
         const cost = jsonBytes(view(found.rec, s.spaceId)) + 256;
@@ -1724,12 +1783,19 @@ function serve(s, now) {
           deferMaintenance(s, now, w.id);
           continue;
         }
+        if (w.take && txn !== null && found.rec.writtenUnder !== txn) {
+          try {
+            reserve(s, txn, publishCost(s, found.rec), limitsOf(s));
+          } catch (e) {
+            if (e instanceof ResourceExhausted) continue;
+            throw e;
+          }
+        }
         charge(s, cost);
-        if (w.take && txn !== null && found.rec.writtenUnder !== txn) reserve(s, txn, publishCost(s, found.rec), limitsOf(s));
         decide(s, now, w.claimKey, { state: "done", result: view(apply(s, now, found.rec, txn, w.take), s.spaceId) });
-      } else if (miss) decide(s, now, w.claimKey, { state: "done", result: null });
+      } else if (miss) decide(s, now, w.claimKey, { state: "done", result: null, ...found.status === "locked" ? { locked: true } : {} });
       else continue;
-      s.waiters.splice(s.waiters.indexOf(w), 1);
+      dropWaiter(s, w);
       continue;
     }
     if (w.authorizedUntil !== void 0 && now >= w.authorizedUntil) continue;
@@ -1744,14 +1810,14 @@ function serve(s, now) {
     }
     try {
       if (w.consumer) assertMailboxCapacity(s, w.consumer, event, now);
-      else if (jsonBytes(s.outbox) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) continue;
+      else if (outboxBytes(s) + jsonBytes(event) + 1 > limitsOf(s).maxOutboxBytes) continue;
     } catch (e) {
       if (e instanceof ResourceExhausted) continue;
       throw e;
     }
-    charge(s, jsonBytes(event) + 256);
-    s.waiters.splice(s.waiters.indexOf(w), 1);
     if (!w.take) {
+      charge(s, jsonBytes(event) + 256);
+      dropWaiter(s, w);
       queueEvent(s, now, event, w.consumer);
       continue;
     }
@@ -1760,8 +1826,16 @@ function serve(s, now) {
     const originRequestKey = w.originRequestKey ?? (diskMapOf(s.rpc?.claims) ? void 0 : Object.entries(s.rpc?.claims ?? {}).find(([, c]) => c.method === "wait" && c.result === w.id)?.[0]);
     if (originRequestKey !== void 0) t.originRequestKey = originRequestKey;
     s.txns[t.id] = t;
-    assertMemberTake(s, f.rec, t.id, now);
-    reserve(s, t.id, publishCost(s, f.rec), limitsOf(s));
+    try {
+      assertMemberTake(s, f.rec, t.id, now);
+      reserve(s, t.id, publishCost(s, f.rec), limitsOf(s));
+    } catch (e) {
+      delete s.txns[t.id];
+      if (e instanceof ResourceExhausted) continue;
+      throw e;
+    }
+    charge(s, jsonBytes(event) + 256);
+    dropWaiter(s, w);
     queueEvent(s, now, { ...event, entry: view(apply(s, now, f.rec, t.id, true), s.spaceId), txn: t.id }, w.consumer);
   }
 }
@@ -1772,21 +1846,22 @@ function parkOperation(s, key2, tmpl2, take, txn, deadline, ifExists, owner) {
 }
 function finish(s, id3, commit, now) {
   touch2(s, now);
-  const runs = s.txns[id3]?.runs;
+  const runs = s.txns[id3]?.runs, announced = s.txns[id3]?.announced;
   delete s.txns[id3];
   for (const run of Object.keys(runs ?? {})) completeFence(s, run, now);
   for (const r of s.regs) if (r.txn === id3 && r.consumer) queueEvent(s, now, { kind: "registrationClosed", eventId: r.id, seq: ++r.seq, handback: r.handback, target: r.target, reason: "transactionEnded" }, r.consumer, true);
   prune(s.regs, (r) => r.txn === id3);
-  const published = [];
-  for (let i = s.entries.length - 1; i >= 0; i--) {
-    let e = s.entries[i];
+  const published2 = [];
+  const all = s.entries.slice();
+  for (let i = all.length - 1; i >= 0; i--) {
+    let e = all[i];
     if (e.readBy.includes(id3)) e = setEntry(s, e, { readBy: e.readBy.filter((t) => t !== id3) });
     if (commit) {
       if (e.takenBy === id3) {
         s.entries.splice(i, 1);
         continue;
       }
-      if (e.writtenUnder === id3) published.push(setEntry(s, e, { writtenUnder: null }));
+      if (e.writtenUnder === id3) published2.push(setEntry(s, e, { writtenUnder: null }));
     } else {
       if (e.writtenUnder === id3) {
         s.entries.splice(i, 1);
@@ -1799,11 +1874,12 @@ function finish(s, id3, commit, now) {
       }
     }
   }
-  published.reverse();
-  for (const e of published) {
+  published2.reverse();
+  for (const e of published2) {
     logPut(s, now, e);
     notifyWrite(s, e, null, now, true);
   }
+  if (commit) for (const e of announced ?? []) record(s, now, transientOp(e), limitsOf(s).maxLogBytes);
 }
 function notify(s, now, tmpl2, txn, lease, handback, target, as, consumer) {
   assertNotArchived(s);
@@ -1925,7 +2001,7 @@ function count(s, now, tmpl2 = null, txn = null, as) {
   if (txn !== null) requireTxn(s, txn, as);
   const mine = active(s, txn, now);
   let n = 0;
-  for (const e of s.entries) {
+  for (const e of candidates(s, tmpl2, true)) {
     if (e.restoredUnverified && txn !== null) continue;
     const st = standing(s, e, now);
     if ((st === "visible" || st === "uncommitted" && mine && e.writtenUnder === txn) && matches(tmpl2, e)) n++;
@@ -1938,7 +2014,7 @@ function list(s, now, tmpl2 = null, txn = null, limit = Number.MAX_SAFE_INTEGER,
   if (txn !== null) requireTxn(s, txn, as);
   const mine = active(s, txn, now);
   const out = [];
-  for (const e of s.entries) {
+  for (const e of candidates(s, tmpl2, true)) {
     if (e.restoredUnverified && txn !== null) continue;
     if (out.length >= limit) break;
     const st = standing(s, e, now);
@@ -1955,7 +2031,14 @@ function listPage(s, now, tmpl2 = null, txn = null, o = {}, as) {
   const after = o.after == null ? 0 : Number(o.after);
   if (txn !== null) requireTxn(s, txn, as);
   const mine = active(s, txn, now);
-  const eligible = s.entries.filter((e) => !(e.restoredUnverified && txn !== null) && seqOf(e.id) > after && (standing(s, e, now) === "visible" || standing(s, e, now) === "uncommitted" && mine && e.writtenUnder === txn) && matches(tmpl2, e)).map((e) => view(e, s.spaceId));
+  const eligible = [];
+  for (const e of candidates(s, tmpl2, true)) {
+    if (seqOf(e.id) <= after || e.restoredUnverified && txn !== null) continue;
+    const st = standing(s, e, now);
+    if (st === "visible" || st === "uncommitted" && mine && e.writtenUnder === txn) {
+      if (matches(tmpl2, e)) eligible.push(view(e, s.spaceId));
+    }
+  }
   return bytePage(eligible, 0, cap, (items, next) => ({ items, next: next === null ? null : String(seqOf(eligible[next - 1].id)), rev: revisionOf(s), streamId: streamIdOf(s) }));
 }
 function logPut(s, now, e) {
@@ -1963,7 +2046,7 @@ function logPut(s, now, e) {
 }
 function importRestoredEntry(s, now, e) {
   const cost = jsonBytes(e) + jsonBytes(putOp(e)) + 256;
-  const lim = limitsOf(s), used = s.entries.reduce((n, x) => n + (x.size ?? jsonBytes(x.fields)), 0) + jsonBytes(e.fields);
+  const lim = limitsOf(s), used = entryBytes(s) + jsonBytes(e.fields);
   if (s.entries.some((x) => x.id === e.id) || s.entries.length >= lim.maxEntries || jsonBytes(e.fields) > lim.maxEntryBytes || used > lim.maxSpaceBytes || used + overheadBytes(s) + cost > lim.maxDocBytes) throw new ResourceExhausted("restored entry violates current space limits or has a duplicate id");
   if (cost + 1024 > lim.maxCommitBytes) throw new ResourceExhausted("restored entry cannot fit the commit budget");
   if (!maintenanceStep(s, cost, now, `restore-entry:${e.id}`)) return false;
@@ -2006,7 +2089,7 @@ function changes(s, afterRev, o = {}) {
   return bytePage(r.batches, 0, Math.min(budget, lim.maxFrameBytes), (batches, next) => ({ streamId: streamIdOf(s), batches, next: batches.length ? batches[batches.length - 1].rev : afterRev, rev, more: next !== null }));
 }
 function stats(s, now) {
-  const r = { entries: 0, byType: {}, locked: 0, uncommitted: 0, expired: 0, txns: 0, waiters: 0, registrations: 0, outbox: s.outbox.length, returned: s.returned ?? 0, bytes: { entries: 0, outbox: jsonBytes(s.outbox), claims: claimBytes(s), waiters: jsonBytes(s.waiters), registrations: jsonBytes(s.regs), txns: jsonBytes(s.txns), total: 0 } };
+  const r = { entries: 0, byType: {}, locked: 0, uncommitted: 0, expired: 0, txns: 0, waiters: 0, registrations: 0, outbox: s.outbox.length, returned: s.returned ?? 0, bytes: { entries: 0, outbox: outboxBytes(s), claims: claimBytes(s), waiters: jsonBytes(s.waiters), registrations: jsonBytes(s.regs), txns: jsonBytes(s.txns), total: 0 } };
   for (const e of s.entries) {
     r.bytes.entries += e.size ?? jsonBytes(e.fields);
     const st = standing(s, e, now);
@@ -2099,7 +2182,7 @@ function applyRunGate(s, now, c) {
   settle(s, now);
   const spend = () => {
     if (!canCharge(s, GATE_COST)) throw new ResourceExhausted("the RunGate change exceeds the remaining commit budget");
-    if (overheadBytes(s) + GATE_COST + s.entries.reduce((n, e) => n + (e.size ?? jsonBytes(e.fields)), 0) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("the RunGate change exceeds maxDocBytes");
+    if (overheadBytes(s) + GATE_COST + entryBytes(s) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("the RunGate change exceeds maxDocBytes");
     charge(s, GATE_COST);
   };
   s.runGates ??= {};
@@ -2229,7 +2312,7 @@ function runGateView(s, runId) {
   const { history: _h, ...rest } = clone(g);
   return { ...rest, boundTxns: boundTxns(s, runId) };
 }
-var NO_WAIT, ANY, FOREVER, DEFAULT_LEASE_MS, MAX_TIMER_MS, until, timerDelay, DEFAULT_LIMITS, LimitError, ResourceExhausted, ResponseBudgetTooSmall, IllegalArgumentError, PermissionError, ReplicaConfigPending, StalePolicyVersion, TransactionError, CompletionViolation, RunGateConflict, UnknownLeaseError, initialState, migrate, clone, plain, commitBudgets, limitsOf, ownedBy, EVENT_OVERHEAD, COMMIT_FIXED, coreJobRetry, peekId, newId, gidOf, expiryWatermarks, noteExpiry, directoryEntry, intervalOf, view, mayUse, requireTxn, commitTxn, abortTxn, active, MAX_LIST, PAGE_OVERHEAD, seqOf, putOp, streamIdOf, revision, SnapshotExpired, RevisionAhead, CHANGES_OVERHEAD, MAX_RUN_GATES, MAX_GATE_HISTORY, GATE_COST, validId, boundTxns;
+var NO_WAIT, ANY, FOREVER, DEFAULT_LEASE_MS, MAX_TIMER_MS, until, timerDelay, DEFAULT_LIMITS, LimitError, ResourceExhausted, ResponseBudgetTooSmall, IllegalArgumentError, UniqueConflict, PermissionError, ReplicaConfigPending, StalePolicyVersion, TransactionError, CompletionViolation, RunGateConflict, UnknownLeaseError, initialState, migrate, clone, plain, commitBudgets, FROZEN_DEFAULTS, mergedLimits, limitsOf, ownedBy, entrySums, entryBytes, dropWaiter, EVENT_OVERHEAD, COMMIT_FIXED, coreJobRetry, peekId, newId, gidOf, typeBuckets, expiryWatermarks, noteExpiry, directoryEntry, intervalOf, view, mayUse, requireTxn, commitTxn, abortTxn, active, MAX_LIST, seqOf, putOp, transientOp, streamIdOf, revision, SnapshotExpired, RevisionAhead, CHANGES_OVERHEAD, MAX_RUN_GATES, MAX_GATE_HISTORY, GATE_COST, validId, boundTxns;
 var init_core = __esm({
   "src/core.ts"() {
     "use strict";
@@ -2263,6 +2346,8 @@ var init_core = __esm({
     };
     IllegalArgumentError = class extends Error {
     };
+    UniqueConflict = class extends IllegalArgumentError {
+    };
     PermissionError = class extends Error {
     };
     ReplicaConfigPending = class extends PermissionError {
@@ -2277,7 +2362,7 @@ var init_core = __esm({
     };
     UnknownLeaseError = class extends Error {
     };
-    initialState = () => ({ nextId: 1, entries: [], txns: {}, regs: [], waiters: [], outbox: [], returned: 0 });
+    initialState = () => ({ nextId: 1, entries: [], txns: {}, regs: [], waiters: [], outbox: [], outboxBytes: 2, returned: 0 });
     migrate = (v, _from) => {
       const d = initialState();
       return {
@@ -2287,6 +2372,7 @@ var init_core = __esm({
         regs: (v.regs ?? d.regs).map((r) => ({ ...r, seq: r.seq ?? 0 })),
         waiters: v.waiters ?? d.waiters,
         outbox: v.outbox ?? d.outbox,
+        ...v.outboxBytes !== void 0 ? { outboxBytes: v.outboxBytes } : {},
         ...v.limits ? { limits: v.limits } : {},
         ...typeof v.spaceId === "string" ? { spaceId: v.spaceId } : {},
         ...typeof v.incarnation === "string" ? { incarnation: v.incarnation } : {},
@@ -2319,8 +2405,31 @@ var init_core = __esm({
     clone = jsonCopy;
     plain = (v) => v === void 0 ? v : clone(v);
     commitBudgets = /* @__PURE__ */ new WeakMap();
-    limitsOf = (s) => ({ ...DEFAULT_LIMITS, ...s.limits ?? {} });
+    FROZEN_DEFAULTS = Object.freeze({ ...DEFAULT_LIMITS });
+    mergedLimits = /* @__PURE__ */ new WeakMap();
+    limitsOf = (s) => {
+      const own2 = s.limits;
+      if (!own2) return FROZEN_DEFAULTS;
+      let m = mergedLimits.get(own2);
+      if (!m) {
+        m = Object.freeze({ ...DEFAULT_LIMITS, ...own2 });
+        mergedLimits.set(own2, m);
+      }
+      return m;
+    };
     ownedBy = (as) => (o) => o.owner === as;
+    entrySums = /* @__PURE__ */ new WeakMap();
+    entryBytes = (s) => {
+      const base = committedArray(s.entries);
+      const known = base && entrySums.get(base);
+      if (known !== void 0 && known !== null) return known;
+      const n = s.entries.reduce((n2, e) => n2 + (e.size ?? jsonBytes(e.fields)), 0);
+      if (base) entrySums.set(base, n);
+      return n;
+    };
+    dropWaiter = (s, w) => {
+      s.waiters.splice(s.waiters.indexOf(w), 1);
+    };
     EVENT_OVERHEAD = 256;
     COMMIT_FIXED = 1024;
     coreJobRetry = (now) => until(now, 1e3);
@@ -2331,6 +2440,7 @@ var init_core = __esm({
       return id3;
     };
     gidOf = (spaceId, id3) => `${spaceId}/${id3}`;
+    typeBuckets = /* @__PURE__ */ new WeakMap();
     expiryWatermarks = /* @__PURE__ */ new WeakMap();
     noteExpiry = (s, expires) => {
       const known = expiryWatermarks.get(s);
@@ -2364,12 +2474,12 @@ var init_core = __esm({
     };
     active = (s, id3, now) => id3 !== null && (s.txns[id3]?.expires ?? -Infinity) > now;
     MAX_LIST = 1e3;
-    PAGE_OVERHEAD = 96;
     seqOf = (id3) => {
       const m = /(\d+)$/.exec(id3);
       return m ? Number(m[1]) : 0;
     };
     putOp = (e) => ({ op: "put", id: e.id, type: e.type, types: [...e.types], fields: clone(e.fields), expires: e.expires, owner: e.owner, ...e.restoredUnverified ? { restoredUnverified: true } : {} });
+    transientOp = (e) => ({ ...putOp(e), transient: true });
     streamIdOf = (s) => `${s.spaceId ?? "local"}:${s.incarnation ?? "0"}`;
     revision = (s) => revisionOf(s);
     SnapshotExpired = class extends Error {
@@ -2437,9 +2547,6 @@ var init_read_chain = __esm({
 });
 
 // src/context.ts
-function createContextKey(description) {
-  return Object.freeze({ token: Symbol(description) });
-}
 function withContextValue(key2, value, parent) {
   return new ValueContext(parent, key2, value);
 }
@@ -2447,20 +2554,16 @@ function withAbortSignal(signal, context) {
   const parent = context.abortSignal;
   return withContextValue(ABORT_SIGNAL, parent === void 0 ? signal : AbortSignal.any([parent, signal]), context);
 }
-function withCancel(context) {
-  const controller = new AbortController();
-  return { context: withAbortSignal(controller.signal, context), cancel: (reason) => controller.abort(reason) };
-}
 function awaitWithContext(promise, context) {
   const signal = context.abortSignal;
   if (signal === void 0) return promise;
   if (signal.aborted) return Promise.reject(abortError(signal));
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const onAbort = () => reject(abortError(signal));
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then((v) => {
       signal.removeEventListener("abort", onAbort);
-      resolve(v);
+      resolve2(v);
     }, (e) => {
       signal.removeEventListener("abort", onAbort);
       reject(e);
@@ -2836,7 +2939,9 @@ function snapshotPage(host, state, now, tmpl2, o, owner) {
   if (record2 && (record2.owner !== owner || record2.query !== query)) throw new PermissionError("the snapshot belongs to another principal or query");
   const fresh = record2 === void 0;
   if (!record2) {
-    const items = list(state, now, tmpl2, o.txn ?? null, Number.MAX_SAFE_INTEGER, owner);
+    const items = list(state, now, tmpl2, o.txn ?? null, o.limit ?? Number.MAX_SAFE_INTEGER, owner);
+    const whole = bytePageIfWhole(items, Math.min(o.maxBytes ?? limits.maxFrameBytes, limits.maxFrameBytes), streamId, revision(state));
+    if (whole) return whole;
     const bytes13 = encodedBytes(items);
     if (bytes13 > limits.maxSnapshotBytes) throw new ResourceExhausted("the snapshot exceeds maxSnapshotBytes");
     record2 = { snapshotEpoch: state.snapshotEpoch ?? 0, token: `ss${randomBytes4(16).toString("hex")}`, streamId, query, owner, rev: revision(state), expires: until(now, limits.snapshotTtlMs), bytes: bytes13, items };
@@ -2857,6 +2962,11 @@ function snapshotPage(host, state, now, tmpl2, o, owner) {
   } else cache.delete(rec.token);
   cache.set(rec.token, rec);
   return plain(page);
+}
+function bytePageIfWhole(items, cap, streamId, rev) {
+  if (!Number.isSafeInteger(cap) || cap < 1) return null;
+  const page = { items, next: null, streamId, rev };
+  return encodedBytes(page) <= cap ? page : null;
 }
 var hosts;
 var init_snapshot = __esm({
@@ -2932,21 +3042,124 @@ var init_client = __esm({
         const id3 = await this.idOf();
         return id3 === r?.defaultSpaceId ? this.host.watchDoc(Space, this.ctx) : this.host.watchDoc(NamedSpace, id3, this.ctx);
       }
+      /**
+       * The commits of this space, for a long poll: `wait(ms)` returns at once when a commit came since the last `wait`
+       * returned (or since the signal was made), else at the next commit or after `ms`. Make it before the first look, so a
+       * commit between a look and the wait is not missed. `gapMs`: after a return, the next one comes no sooner than this
+       * (a busy space commits hundreds of times a second, and every waiting call that looks again costs it a read: many
+       * waiters woken by every commit would keep it from committing).
+       */
+      async commitSignal(o = {}) {
+        const watch = await this.watch(), gapMs = o.gapMs ?? 0;
+        let dirty = false, poke = null, last = -Infinity;
+        watch?.start(() => {
+          dirty = true;
+          poke?.();
+        });
+        const sleep2 = (ms2) => new Promise((res) => setTimeout(res, ms2));
+        return {
+          async wait(ms2) {
+            const end = Date.now() + ms2;
+            if (!watch) ms2 = Math.min(ms2, 50);
+            if (!dirty) await new Promise((res) => {
+              const t = setTimeout(() => {
+                poke = null;
+                res();
+              }, ms2);
+              poke = () => {
+                clearTimeout(t);
+                poke = null;
+                res();
+              };
+            });
+            const early = last + gapMs - Date.now();
+            if (early > 0) await sleep2(Math.min(early, Math.max(0, end - Date.now())));
+            dirty = false;
+            last = Date.now();
+          },
+          async stop() {
+            await watch?.stop();
+          }
+        };
+      }
       async configuration() {
         const s = await this.snap();
         return { spaceId: s?.spaceId, limits: limitsOf(s ?? initialState()) };
       }
       async write(entry, txn = null, lease = ANY, o = {}) {
-        const r = await this.mutate("write", { entry, txn, lease, ...o.unique ? { unique: o.unique } : {} }, o.request, (s, now) => {
-          if (o.unique !== void 0) {
-            if (!Array.isArray(o.unique) || !o.unique.length || o.unique.some((k) => typeof k !== "string" || !Object.hasOwn(entry.fields, k))) throw new IllegalArgumentError("unique needs existing field names");
-            settle(s, now);
-            if (s.entries.some((e) => e.type === entry.type && o.unique.every((k) => deepEqual(e.fields[k] ?? null, entry.fields[k])))) throw new IllegalArgumentError("unique entry already exists");
-          }
-          return write(s, now, entry, txn, lease, this.as);
-        });
+        const r = await this.mutate("write", { entry, txn, lease, ...o.unique ? { unique: o.unique } : {}, ...o.transient ? { transient: true } : {} }, o.request, (s, now) => this.writeIn(s, now, entry, txn, lease, o.unique, o.transient));
         if (r.fresh) this.meter.inc("writes");
         return r.value;
+      }
+      writeIn(s, now, entry, txn, lease, unique, transient = false) {
+        if (transient) {
+          if (unique !== void 0) throw new IllegalArgumentError("a transient write cannot be unique");
+          return announce(s, now, entry, txn, this.as);
+        }
+        if (unique !== void 0) {
+          if (!Array.isArray(unique) || !unique.length || unique.some((k) => typeof k !== "string" || !Object.hasOwn(entry.fields, k))) throw new IllegalArgumentError("unique needs existing field names");
+          settle(s, now);
+          if (s.entries.some((e) => e.type === entry.type && unique.every((k) => deepEqual(e.fields[k] ?? null, entry.fields[k])))) throw new UniqueConflict("unique entry already exists");
+        }
+        return write(s, now, entry, txn, lease, this.as);
+      }
+      /**
+       * Several steps in one commit under one request: all of them happen, or (one throws) none. A transaction's writes and
+       * its commit, or its begin and first takes, cost one round and one commit instead of one each. Takes and reads do not
+       * wait (a batch holds no waiter); a step that needs to wait is a call of its own.
+       */
+      async batch(ops, o = {}) {
+        if (!Array.isArray(ops) || ops.length === 0) throw new IllegalArgumentError("a batch needs steps");
+        await this.maintain();
+        const r = await this.host.commit(async (tx) => {
+          const s = await this.doc(tx), now = this.now();
+          this.options.authorization?.check();
+          let key2;
+          if (o.request) {
+            if (!s.rpc?.claims[keyOf(s, o.request)]) assertMemberAdmission(s, "batch");
+            const lim = limitsOf(s), reads = ops.filter((x) => x.op === "take" || x.op === "read").length;
+            const ad = admit(s, now, o.request, "batch", plain(ops), FOREVER, 1024 * ops.length + reads * (lim.maxEntryBytes + 4 * lim.maxTypeChars * lim.maxTypes + 4096));
+            if (ad.kind === "done") return { results: plain(ad.result), fresh: false };
+            if (ad.kind === "cancelled") throw new OperationCancelled(`request ${o.request.requestId} was cancelled`);
+            this.claimMetadata(s, ad.key);
+            key2 = ad.key;
+          }
+          let begun = null;
+          const txnOf = (t) => {
+            if (t !== "$") return t ?? null;
+            if (begun === null) throw new IllegalArgumentError('txn "$" needs a begin earlier in the batch');
+            return begun;
+          };
+          const results = [];
+          for (const x of ops) {
+            if (x.op === "begin") {
+              const l = createTxn(s, now, x.lease ?? ANY, this.as);
+              begun = l.id;
+              results.push(l);
+            } else if (x.op === "write") results.push(this.writeIn(s, now, x.entry, txnOf(x.txn), x.lease ?? ANY, x.unique, x.transient === true));
+            else if (x.op === "take" || x.op === "read") {
+              const p = probe(s, now, x.template, txnOf(x.txn), x.op === "take", this.as);
+              results.push(p.status === "found" ? { entry: view(p.entry, s.spaceId) } : { entry: null, ...p.status === "locked" ? { locked: true } : {} });
+            } else if (x.op === "commit") {
+              const t = txnOf(x.txn);
+              this.checkTransactionRights(s, t);
+              commitTxn(s, now, t, this.as);
+              results.push(null);
+            } else if (x.op === "abort") {
+              abortTxn(s, now, txnOf(x.txn), this.as);
+              results.push(null);
+            } else throw new IllegalArgumentError(`unknown batch step ${x.op}`);
+          }
+          const plain2 = plain(results);
+          if (key2 !== void 0) decide(s, now, key2, { state: "done", result: plain2 });
+          return { results: plain2, fresh: true };
+        }, this.ctx);
+        if (r.fresh) {
+          for (const x of ops) if (x.op === "write") this.meter.inc("writes");
+          else if (x.op === "take") this.meter.inc("takes");
+          else if (x.op === "read") this.meter.inc("reads");
+        }
+        return r.results;
       }
       /**
        * An immediate mutation, optionally under a request identity: claim check, effect and stored result in one commit.
@@ -3042,6 +3255,13 @@ var init_client = __esm({
       takeIfExists(tmpl2, timeout, o = {}) {
         return this.op(tmpl2, timeout, o, true, true);
       }
+      /** A readIfExists/takeIfExists that also reports whether the miss saw only matches locked by other transactions
+       *  (`locked` distinguishes "held, may come back" from "definitely gone" without a timing heuristic). */
+      async probe(tmpl2, timeout, o = {}) {
+        const out = {};
+        const entry = await this.op(tmpl2, timeout, o, o.take === true, true, out);
+        return { entry, locked: out.locked === true };
+      }
       /** `target` is the conversation that receives the events; without one they would have nobody to go to. */
       async notify(tmpl2, o) {
         if (o.target == null || o.target === "") throw new IllegalArgumentError("notify needs a target conversation");
@@ -3108,8 +3328,19 @@ var init_client = __esm({
       }
       /** The commit batches after `afterRev` (core.changes): limited by bytes, ends between batches, `more` says if there is newer. */
       async changes(afterRev, o = {}) {
-        const s = await this.snap();
-        return changes(s ?? initialState(), afterRev, o);
+        const read = async () => changes(await this.snap() ?? initialState(), afterRev, o);
+        const end = this.now() + (o.waitMs ?? 0);
+        if (!(o.waitMs > 0)) return read();
+        const signal = await this.commitSignal();
+        try {
+          for (; ; ) {
+            const r = await read();
+            if (r.batches.length || this.now() >= end) return r;
+            await awaitWithContext(signal.wait(Math.max(1, end - this.now())), this.ctx);
+          }
+        } finally {
+          await signal.stop();
+        }
       }
       /** Revision of the newest domain or internal-state commit (0: none yet), with the stream it belongs to. */
       async revision() {
@@ -3208,11 +3439,11 @@ var init_client = __esm({
         }), this.ctx).finally(() => clearTimeout(t));
       }
       /** `timeout` may be FOREVER. Long waits sleep in timer-sized chunks; every wake-up re-probes, so nothing is lost. */
-      async op(tmpl2, timeout, o, take, ifExists) {
-        if (o.request) return this.durableOperation(tmpl2, timeout, o, take, ifExists);
+      async op(tmpl2, timeout, o, take, ifExists, out) {
+        if (o.request) return this.durableOperation(tmpl2, timeout, o, take, ifExists, out);
         let deadline = o.deadline ?? deadlineOf(this.now(), timeout);
         const txn = o.txn ?? null;
-        await this.host.commit(async (tx) => {
+        if (!(await this.snap())?.spaceId) await this.host.commit(async (tx) => {
           await this.doc(tx);
         }, this.ctx);
         const watch = await this.watch();
@@ -3237,16 +3468,16 @@ var init_client = __esm({
               const miss = p.status !== "found" && (p.status === "none" && ifExists || dl <= now);
               const outcome = p.status === "found" ? view2(p.entry, s.spaceId) : null;
               if (o.once && (p.status === "found" || miss)) await o.once.set(tx, outcome);
-              return { ...p, miss, next: nextExpiry(s), spaceId: s.spaceId, deadline: dl };
+              return { ...p, miss, next: nextExpiry(s), spaceId: s.spaceId };
             }, this.ctx);
             if (r.status === "replay") return r.value;
-            deadline = r.deadline;
             if (r.status === "found") {
               this.meter.inc(take ? "takes" : "reads");
               return view2(r.entry, r.spaceId);
             }
             if (r.miss) {
               this.meter.inc("misses");
+              if (out) out.locked = r.status === "locked";
               return null;
             }
             const left = deadline - this.now();
@@ -3276,13 +3507,13 @@ var init_client = __esm({
         return this.host.commit(async (tx) => {
           const s = await this.doc(tx), now = this.now();
           this.options.authorization?.check();
-          const existing = s.rpc?.claims[keyOf(s, o.request)];
-          if (!existing) {
+          const existing2 = s.rpc?.claims[keyOf(s, o.request)];
+          if (!existing2) {
             assertMemberAdmission(s, method);
-            const open2 = pendingClaims(s).map(([, c]) => c);
-            const n = open2.filter((c) => canonicalPrincipal(c.principal) === canonicalPrincipal(o.request.principal)).length;
+            const open3 = pendingClaims(s).map(([, c]) => c);
+            const n = open3.filter((c) => canonicalPrincipal(c.principal) === canonicalPrincipal(o.request.principal)).length;
             if (n >= (this.options.maxPending ?? 32)) throw new ResourceExhausted("too many pending operations for this principal");
-            const peerCount = open2.filter((c) => c.principal.peerId === o.request.principal.peerId || !!this.options.authorization?.transportPeerId && c.transportPeerId === this.options.authorization.transportPeerId).length;
+            const peerCount = open3.filter((c) => c.principal.peerId === o.request.principal.peerId || !!this.options.authorization?.transportPeerId && c.transportPeerId === this.options.authorization.transportPeerId).length;
             if (peerCount >= (this.options.maxPendingPeer ?? 128)) throw new ResourceExhausted("too many pending operations for this peer");
           }
           const lim = limitsOf(s);
@@ -3304,7 +3535,7 @@ var init_client = __esm({
             const result = p.status === "found" ? view(p.entry, s.spaceId) : null;
             if (p.status === "found" || miss) {
               if (o.resultBudget !== void 0 && Buffer.byteLength(JSON.stringify(result)) > o.resultBudget) throw new ResponseBudgetTooSmall(Buffer.byteLength(JSON.stringify(result)));
-              decide(s, now, ad.key, { state: "done", result });
+              decide(s, now, ad.key, { state: "done", result, ...p.status === "locked" ? { locked: true } : {} });
             } else {
               parkOperation(s, ad.key, tmpl2, take, o.txn ?? null, ad.deadline, ifExists, this.as);
               this.authorizePending(s, o.request);
@@ -3332,7 +3563,7 @@ var init_client = __esm({
           touch2(s, this.now());
         }
       }
-      async durableOperation(tmpl2, timeout, o, take, ifExists) {
+      async durableOperation(tmpl2, timeout, o, take, ifExists, out) {
         let value = await this.beginOperation(tmpl2, timeout, o, take, ifExists);
         const watch = await this.watch();
         let wake = () => {
@@ -3349,6 +3580,7 @@ var init_client = __esm({
             if (value.state === "cancelled") throw new OperationCancelled("the operation was cancelled");
             if (value.state === "done") {
               this.meter.inc(value.result === null ? "misses" : take ? "takes" : "reads");
+              if (out) out.locked = value.locked === true;
               return value.result ?? null;
             }
             if (!dirty) await awaitWithContext(new Promise((res) => {
@@ -3503,12 +3735,12 @@ var init_entry_replication_stream = __esm({
       }
       async wait(ms2, signal) {
         if (signal.aborted) return;
-        await new Promise((resolve) => {
+        await new Promise((resolve2) => {
           let timer;
           const done = () => {
             clearTimeout(timer);
             signal.removeEventListener("abort", done);
-            resolve();
+            resolve2();
           };
           timer = setTimeout(done, ms2);
           signal.addEventListener("abort", done, { once: true });
@@ -3543,22 +3775,12 @@ var init_entry_replication_stream = __esm({
 });
 
 // src/entry-replication.ts
-var entry_replication_exports = {};
-__export(entry_replication_exports, {
-  ENTRY_EXPIRY_GRACE_MS: () => ENTRY_EXPIRY_GRACE_MS,
-  EntryReplicaPeers: () => EntryReplicaPeers,
-  EntryReplicas: () => EntryReplicas,
-  EntryReplicationController: () => EntryReplicationController,
-  ReplicationConflict: () => ReplicationConflict,
-  entryChangeId: () => entryChangeId,
-  positionsOf: () => positionsOf
-});
 import { randomBytes as randomBytes5 } from "node:crypto";
 function configOf(input) {
   const c = copy2(input);
-  if (!c || !exact(c, ["spaceId", "authorityId", "replicaId", "incarnation", "members", "rules"]) || ![c.spaceId, c.authorityId, c.replicaId, c.incarnation].every(id) || !Array.isArray(c.members) || !c.members.length || c.members.length > 32 || !Array.isArray(c.rules) || !c.rules.length || c.rules.length > 64) throw new ReplicationConflict("invalid replication configuration");
-  if (c.members.some((m) => !m || !exact(m, ["replicaId", "incarnation"]) || !id(m.replicaId) || !id(m.incarnation)) || new Set(c.members.map((m) => m.replicaId)).size !== c.members.length || !c.members.some((m) => m.replicaId === c.replicaId && m.incarnation === c.incarnation)) throw new ReplicationConflict("invalid or missing replica membership");
-  if (new Set(c.rules.map((r) => r.type)).size !== c.rules.length || c.rules.some((r) => !r || !id(r.type) || !["lww", "set"].includes(r.variant) || (r.variant === "lww" ? !exact(r, ["type", "variant", "keyFields"]) || !Array.isArray(r.keyFields) || !r.keyFields.length || r.keyFields.length > 16 || new Set(r.keyFields).size !== r.keyFields.length || r.keyFields.some((k) => !id(k)) : !exact(r, ["type", "variant"])))) throw new ReplicationConflict("invalid replication rules");
+  if (!c || !exact2(c, ["spaceId", "authorityId", "replicaId", "incarnation", "members", "rules"]) || ![c.spaceId, c.authorityId, c.replicaId, c.incarnation].every(id) || !Array.isArray(c.members) || !c.members.length || c.members.length > 32 || !Array.isArray(c.rules) || !c.rules.length || c.rules.length > 64) throw new ReplicationConflict("invalid replication configuration");
+  if (c.members.some((m) => !m || !exact2(m, ["replicaId", "incarnation"]) || !id(m.replicaId) || !id(m.incarnation)) || new Set(c.members.map((m) => m.replicaId)).size !== c.members.length || !c.members.some((m) => m.replicaId === c.replicaId && m.incarnation === c.incarnation)) throw new ReplicationConflict("invalid or missing replica membership");
+  if (new Set(c.rules.map((r) => r.type)).size !== c.rules.length || c.rules.some((r) => !r || !id(r.type) || !["lww", "set"].includes(r.variant) || (r.variant === "lww" ? !exact2(r, ["type", "variant", "keyFields"]) || !Array.isArray(r.keyFields) || !r.keyFields.length || r.keyFields.length > 16 || new Set(r.keyFields).size !== r.keyFields.length || r.keyFields.some((k) => !id(k)) : !exact2(r, ["type", "variant"])))) throw new ReplicationConflict("invalid replication rules");
   c.members.sort((a, b) => a.replicaId < b.replicaId ? -1 : 1);
   c.rules.sort((a, b) => a.type < b.type ? -1 : 1);
   if (bytes(c) > 8192) throw new ResourceExhausted("replica configuration exceeds 8 KiB");
@@ -3587,7 +3809,7 @@ function mergeRuns(...lists) {
 function runsOf(positions) {
   return mergeRuns(positions.map((p) => [p, p]));
 }
-var EntryReplicaPeers, ENTRY_EXPIRY_GRACE_MS, ReplicationConflict, EntryReplicas, copy2, canonical2, bytes, hash2, id, number, exact, entryChangeId, origin, contractHash, key, snapshotCaches, sha, chunkKey, pageHash, droppedCount, headOf, contiguous, inRuns, memberKey, manifestSeed, EntryReplicationController;
+var EntryReplicaPeers, ENTRY_EXPIRY_GRACE_MS, ReplicationConflict, EntryReplicas, copy2, canonical2, bytes, hash2, id, number, exact2, entryChangeId, origin, contractHash, key, snapshotCaches, sha, chunkKey, pageHash, droppedCount, headOf, contiguous, inRuns, memberKey, manifestSeed, EntryReplicationController;
 var init_entry_replication = __esm({
   "src/entry-replication.ts"() {
     "use strict";
@@ -3617,7 +3839,7 @@ var init_entry_replication = __esm({
     hash2 = digestJson;
     id = (v) => typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(v);
     number = (v) => Number.isSafeInteger(v) && v >= 0;
-    exact = (v, keys) => Object.keys(v).sort().join(",") === [...keys].sort().join(",");
+    exact2 = (v, keys) => Object.keys(v).sort().join(",") === [...keys].sort().join(",");
     entryChangeId = (e) => canonical2([e.originReplicaId, e.incarnation, e.seq]);
     origin = (e) => canonical2([e.originReplicaId, e.incarnation]);
     contractHash = (c) => hash2({ spaceId: c.spaceId, authorityId: c.authorityId, members: c.members, rules: c.rules });
@@ -3683,9 +3905,9 @@ var init_entry_replication = __esm({
         return typeof tag === "string" && Array.isArray(v) && v.length === 3 && number(v[2]) && v[2] >= 1 && this.config.members.some((p) => p.replicaId === v[0] && p.incarnation === v[1]) && canonical2(v) === tag;
       }
       validateMutation(m) {
-        const principalOk = (p) => !!p && typeof p === "object" && exact(p, p.agentId === void 0 ? ["peerId"] : ["peerId", "agentId"]) && id(p.peerId) && (p.agentId === void 0 || id(p.agentId));
+        const principalOk = (p) => !!p && typeof p === "object" && exact2(p, p.agentId === void 0 ? ["peerId"] : ["peerId", "agentId"]) && id(p.peerId) && (p.agentId === void 0 || id(p.agentId));
         if (m?.kind === "erase") {
-          if (!exact(m, ["kind", "principal", "owner"]) || !principalOk(m.principal) || !principalOk(m.owner)) throw new ReplicationConflict("invalid erase");
+          if (!exact2(m, ["kind", "principal", "owner"]) || !principalOk(m.principal) || !principalOk(m.owner)) throw new ReplicationConflict("invalid erase");
           return;
         }
         if (!m || !id(m.type) || !m.owner || !principalOk(m.owner)) throw new ReplicationConflict("invalid mutation identity");
@@ -3693,11 +3915,11 @@ var init_entry_replication = __esm({
         if (!r) throw new ReplicationConflict("type has no replication rule");
         if (m.kind === "redacted") {
           const keyed = r.variant === "lww", keys = ["kind", "type", "owner", "was", "erase", ...keyed ? ["keyHash"] : [], ...m.was === "renew" ? ["tag"] : []];
-          if (!exact(m, keys) || (keyed ? !["put", "delete"].includes(m.was) : !["add", "renew"].includes(m.was)) || !this.tagOk(m.erase) || keyed && !sha(m.keyHash) || m.was === "renew" && !this.tagOk(m.tag)) throw new ReplicationConflict("invalid redacted change");
+          if (!exact2(m, keys) || (keyed ? !["put", "delete"].includes(m.was) : !["add", "renew"].includes(m.was)) || !this.tagOk(m.erase) || keyed && !sha(m.keyHash) || m.was === "renew" && !this.tagOk(m.tag)) throw new ReplicationConflict("invalid redacted change");
           return;
         }
         if (m.kind === "remove") {
-          if (r.variant !== "set" || !exact(m, ["kind", "type", "tags", "owner"]) || !Array.isArray(m.tags) || m.tags.length > 256 || new Set(m.tags).size !== m.tags.length) throw new ReplicationConflict("invalid observed remove");
+          if (r.variant !== "set" || !exact2(m, ["kind", "type", "tags", "owner"]) || !Array.isArray(m.tags) || m.tags.length > 256 || new Set(m.tags).size !== m.tags.length) throw new ReplicationConflict("invalid observed remove");
           for (const tag of m.tags) {
             let v;
             try {
@@ -3709,7 +3931,7 @@ var init_entry_replication = __esm({
           }
         } else {
           const hasLease = m.kind === "put" || m.kind === "add" || m.kind === "renew";
-          if (!exact(m, m.kind === "renew" ? ["kind", "type", "tag", "fields", "owner", "expiresAt"] : hasLease ? ["kind", "type", "fields", "owner", "expiresAt"] : ["kind", "type", "fields", "owner"]) || (r.variant === "lww" ? !["put", "delete"].includes(m.kind) : !["add", "renew"].includes(m.kind)) || !m.fields || typeof m.fields !== "object" || Array.isArray(m.fields) || hasLease && m.expiresAt !== null && !number(m.expiresAt)) throw new ReplicationConflict("invalid replicated mutation");
+          if (!exact2(m, m.kind === "renew" ? ["kind", "type", "tag", "fields", "owner", "expiresAt"] : hasLease ? ["kind", "type", "fields", "owner", "expiresAt"] : ["kind", "type", "fields", "owner"]) || (r.variant === "lww" ? !["put", "delete"].includes(m.kind) : !["add", "renew"].includes(m.kind)) || !m.fields || typeof m.fields !== "object" || Array.isArray(m.fields) || hasLease && m.expiresAt !== null && !number(m.expiresAt)) throw new ReplicationConflict("invalid replicated mutation");
           if (m.kind === "renew") {
             let tag;
             try {
@@ -3724,7 +3946,7 @@ var init_entry_replication = __esm({
         }
       }
       validateEvent(e, now) {
-        if (!e || !exact(e, ["originReplicaId", "incarnation", "seq", "clock", "requestId", "argumentHash", "mutation"]) || !this.config.members.some((m) => m.replicaId === e.originReplicaId && m.incarnation === e.incarnation) || !number(e.seq) || e.seq < 1 || !id(e.requestId) || typeof e.argumentHash !== "string" || !/^[a-f0-9]{64}$/.test(e.argumentHash)) throw new ReplicationConflict("invalid change identity or retired origin");
+        if (!e || !exact2(e, ["originReplicaId", "incarnation", "seq", "clock", "requestId", "argumentHash", "mutation"]) || !this.config.members.some((m) => m.replicaId === e.originReplicaId && m.incarnation === e.incarnation) || !number(e.seq) || e.seq < 1 || !id(e.requestId) || typeof e.argumentHash !== "string" || !/^[a-f0-9]{64}$/.test(e.argumentHash)) throw new ReplicationConflict("invalid change identity or retired origin");
         validateHybridClock(e.clock);
         if (e.clock.physical - now > 6e4) throw new ReplicationClockError("remote clock exceeds future bound");
         this.validateMutation(e.mutation);
@@ -4048,7 +4270,7 @@ var init_entry_replication = __esm({
       async installSnapshot(snapshot) {
         const v = copy2(snapshot);
         await this.check("import");
-        if (!v || !exact(v, ["version", "spaceId", "authorityId", "configHash", "events", "sha256"]) || v.version !== 1 || v.spaceId !== this.config.spaceId || v.authorityId !== this.config.authorityId || v.configHash !== this.configHash) throw new ReplicationConflict("snapshot binding changed");
+        if (!v || !exact2(v, ["version", "spaceId", "authorityId", "configHash", "events", "sha256"]) || v.version !== 1 || v.spaceId !== this.config.spaceId || v.authorityId !== this.config.authorityId || v.configHash !== this.configHash) throw new ReplicationConflict("snapshot binding changed");
         const { sha256, ...body } = v;
         if (sha256 !== hash2(body)) throw new ReplicationConflict("snapshot hash mismatch");
         return this.importChanges(v.events);
@@ -4073,10 +4295,10 @@ var init_entry_replication = __esm({
         if (m.spaceId !== this.config.spaceId || m.authorityId !== this.config.authorityId || m.configHash !== this.configHash || !this.config.members.some((p) => p.replicaId === m.sourceReplicaId && p.incarnation === m.sourceIncarnation)) throw new ReplicationConflict("snapshot binding changed");
       }
       validateManifest(m) {
-        if (!m || !exact(m, ["version", "id", "spaceId", "authorityId", "configHash", "sourceReplicaId", "sourceIncarnation", "revision", "eventCount", "bytes", "pageBytes", "pageCount", "expiresAt", "seedHash", "rootHash"]) || m.version !== 1 || !/^ss[0-9a-f]{32}$/.test(m.id) || m.spaceId !== this.config.spaceId || m.authorityId !== this.config.authorityId || m.configHash !== this.configHash || !this.config.members.some((p) => p.replicaId === m.sourceReplicaId && p.incarnation === m.sourceIncarnation) || !number(m.revision) || !number(m.eventCount) || m.revision < m.eventCount || !number(m.bytes) || m.bytes < 2 || m.bytes > this.maxHistoryBytes || !number(m.pageBytes) || m.pageBytes < 1024 || 2 * m.pageBytes + 16384 > this.maxBatchBytes || !number(m.pageCount) || m.pageCount < 1 || m.pageCount > 2048 || !number(m.expiresAt) || !sha(m.seedHash) || !sha(m.rootHash) || manifestSeed(m) !== m.seedHash) throw new ReplicationConflict("invalid snapshot manifest or binding");
+        if (!m || !exact2(m, ["version", "id", "spaceId", "authorityId", "configHash", "sourceReplicaId", "sourceIncarnation", "revision", "eventCount", "bytes", "pageBytes", "pageCount", "expiresAt", "seedHash", "rootHash"]) || m.version !== 1 || !/^ss[0-9a-f]{32}$/.test(m.id) || m.spaceId !== this.config.spaceId || m.authorityId !== this.config.authorityId || m.configHash !== this.configHash || !this.config.members.some((p) => p.replicaId === m.sourceReplicaId && p.incarnation === m.sourceIncarnation) || !number(m.revision) || !number(m.eventCount) || m.revision < m.eventCount || !number(m.bytes) || m.bytes < 2 || m.bytes > this.maxHistoryBytes || !number(m.pageBytes) || m.pageBytes < 1024 || 2 * m.pageBytes + 16384 > this.maxBatchBytes || !number(m.pageCount) || m.pageCount < 1 || m.pageCount > 2048 || !number(m.expiresAt) || !sha(m.seedHash) || !sha(m.rootHash) || manifestSeed(m) !== m.seedHash) throw new ReplicationConflict("invalid snapshot manifest or binding");
       }
       validatePage(m, p, index, offset, previousHash) {
-        if (!p || !exact(p, ["snapshotId", "index", "offset", "next", "events", "previousHash", "sha256"]) || p.snapshotId !== m.id || p.index !== index || p.offset !== offset || p.next !== index + 1 || p.previousHash !== previousHash || !Array.isArray(p.events) || p.events.length > 1024 || !p.events.length && m.eventCount !== 0 || !sha(p.sha256) || pageHash(p) !== p.sha256 || bytes(p) > m.pageBytes || offset + p.events.length > m.eventCount) throw new ReplicationConflict("snapshot page changed, is out of order or exceeds budget");
+        if (!p || !exact2(p, ["snapshotId", "index", "offset", "next", "events", "previousHash", "sha256"]) || p.snapshotId !== m.id || p.index !== index || p.offset !== offset || p.next !== index + 1 || p.previousHash !== previousHash || !Array.isArray(p.events) || p.events.length > 1024 || !p.events.length && m.eventCount !== 0 || !sha(p.sha256) || pageHash(p) !== p.sha256 || bytes(p) > m.pageBytes || offset + p.events.length > m.eventCount) throw new ReplicationConflict("snapshot page changed, is out of order or exceeds budget");
       }
       /** `verified` (page admission): the chain up to `count` was checked when each page was staged, and the ledger's
        * `chainHash` binds it; only the linkage is rechecked, not every page's canonical hash (quadratic per import).
@@ -4612,7 +4834,7 @@ var init_entry_replication = __esm({
           return c > 0 || c === 0 && a.originReplicaId > b.originReplicaId;
         };
         const renewed = (m) => m.kind === "renew" || m.kind === "redacted" && m.was === "renew" ? m.tag : void 0;
-        const groups = /* @__PURE__ */ new Map(), removedStably = /* @__PURE__ */ new Set(), renewsOf = /* @__PURE__ */ new Map(), candidates = /* @__PURE__ */ new Set();
+        const groups = /* @__PURE__ */ new Map(), removedStably = /* @__PURE__ */ new Set(), renewsOf = /* @__PURE__ */ new Map(), candidates2 = /* @__PURE__ */ new Set();
         for (const [i, e] of events.entries()) {
           const m = e.mutation;
           if (m.kind === "erase") continue;
@@ -4637,20 +4859,20 @@ var init_entry_replication = __esm({
         for (const items of groups.values()) {
           items.sort((x, y) => beats(events[x], events[y]) ? -1 : 1);
           const [w, ...rest] = items, wm = events[w].mutation, going = rest.filter((i) => ok(events[i]));
-          for (const i of going) candidates.add(i);
-          if (going.length === rest.length && ok(events[w]) && (wm.kind === "delete" || wm.kind === "redacted" || wm.kind === "put" && expired(wm, now))) candidates.add(w);
+          for (const i of going) candidates2.add(i);
+          if (going.length === rest.length && ok(events[w]) && (wm.kind === "delete" || wm.kind === "redacted" || wm.kind === "put" && expired(wm, now))) candidates2.add(w);
         }
         for (const [i, e] of events.entries()) {
           const m = e.mutation;
           if (m.kind === "erase" || rule(m.type).variant !== "set" || !ok(e)) continue;
           if (m.kind === "remove") {
-            candidates.add(i);
+            candidates2.add(i);
             continue;
           }
           const erase = m.kind === "redacted" ? events[index.get(m.erase) ?? -1] : void 0;
-          if (removedStably.has(entryChangeId(e)) || erase && stable(erase) || m.kind !== "redacted" && expired(m, Math.min(now, recorded))) candidates.add(i);
+          if (removedStably.has(entryChangeId(e)) || erase && stable(erase) || m.kind !== "redacted" && expired(m, Math.min(now, recorded))) candidates2.add(i);
         }
-        const drop = new Set(candidates);
+        const drop = new Set(candidates2);
         const gone = (tag) => {
           const i = index.get(tag);
           if (i !== void 0) return drop.has(i);
@@ -4700,7 +4922,7 @@ var init_entry_replication = __esm({
         return { ...body, streamId: hash2(body) };
       }
       validateStream(source) {
-        if (!source || !exact(source, ["version", "spaceId", "authorityId", "configHash", "replicaId", "incarnation", "streamId"]) || source.version !== 1 || source.spaceId !== this.config.spaceId || source.authorityId !== this.config.authorityId || source.configHash !== this.configHash || !this.config.members.some((m) => m.replicaId === source.replicaId && m.incarnation === source.incarnation) || !sha(source.streamId)) throw new ReplicationConflict("stream identity or binding changed");
+        if (!source || !exact2(source, ["version", "spaceId", "authorityId", "configHash", "replicaId", "incarnation", "streamId"]) || source.version !== 1 || source.spaceId !== this.config.spaceId || source.authorityId !== this.config.authorityId || source.configHash !== this.configHash || !this.config.members.some((m) => m.replicaId === source.replicaId && m.incarnation === source.incarnation) || !sha(source.streamId)) throw new ReplicationConflict("stream identity or binding changed");
         const { streamId, ...body } = source;
         if (streamId !== hash2(body)) throw new ReplicationConflict("stream identity hash changed");
       }
@@ -4761,7 +4983,7 @@ var init_entry_replication = __esm({
       }
       async importStreamPage(input) {
         const page = copy2(input);
-        if (!page || !exact(page, ["source", "after", "next", "headRevision", "more", "events", "sha256", ...page && "positions" in page ? ["positions"] : []])) throw new ReplicationConflict("invalid stream page");
+        if (!page || !exact2(page, ["source", "after", "next", "headRevision", "more", "events", "sha256", ...page && "positions" in page ? ["positions"] : []])) throw new ReplicationConflict("invalid stream page");
         this.validateStream(page.source);
         const positions = page.positions ?? (Array.isArray(page.events) ? page.events.map((_, n) => page.after + n + 1) : []);
         if (!number(page.after) || !number(page.next) || !number(page.headRevision) || page.after > page.next || page.next > page.headRevision || typeof page.more !== "boolean" || page.more !== page.next < page.headRevision || !Array.isArray(page.events) || page.events.length > 1024 || !Array.isArray(positions) || positions.length !== page.events.length || positions.some((p, n) => !number(p) || p <= (n ? positions[n - 1] : page.after)) || (positions.length ? positions.at(-1) > page.next || page.more && positions.at(-1) !== page.next : page.more) || !sha(page.sha256) || this.streamPageHash(page) !== page.sha256 || bytes(page) > 256 * 1024) throw new ReplicationConflict("stream page range or hash changed");
@@ -4898,7 +5120,7 @@ function sealedIn(e) {
   for (let x = e, n = 0; x && n < 8; x = x.cause, n++) if (x instanceof CommitSealed) return x;
   return null;
 }
-var PROTOCOL_VERSION, METHODS, MUTATING, StaticIdentity, DEFAULT_POLICY, MergeTypeNotExclusive, Bad, Denied, fail, changeRequestHash, isObj, str, int, optInt, template, duration2, principalKey, SpaceService, UnsupportedProtocol, sealedReply;
+var PROTOCOL_VERSION, METHODS, sleepSignal, POLL_FALLBACK_MS, POLL_GAP_MS, encoded, MUTATING, StaticIdentity, DEFAULT_POLICY, MergeTypeNotExclusive, LONE_SURROGATE, LONE_IN_TEXT, wellFormed, Bad, Denied, fail, changeRequestHash, isObj, str, int, optInt, template, duration2, principalKey, SpaceService, UnsupportedProtocol, sealedReply;
 var init_service = __esm({
   "src/service.ts"() {
     "use strict";
@@ -4916,8 +5138,13 @@ var init_service = __esm({
     init_paging();
     init_mailbox();
     PROTOCOL_VERSION = 1;
-    METHODS = ["hello", "generation", "write", "read", "take", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "txn", "lease", "changes", "wait", "notify", "events", "ack"];
-    MUTATING = ["write", "read", "take", "cancelOperation", "txn", "lease", "wait", "notify", "ack"];
+    METHODS = ["hello", "generation", "write", "read", "take", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "spaces", "txn", "lease", "changes", "wait", "notify", "events", "ack", "batch"];
+    sleepSignal = { wait: (ms2) => new Promise((r) => setTimeout(r, Math.min(50, Math.max(1, ms2)))), stop: async () => {
+    } };
+    POLL_FALLBACK_MS = 1e3;
+    POLL_GAP_MS = 25;
+    encoded = /* @__PURE__ */ new WeakMap();
+    MUTATING = ["write", "read", "take", "cancelOperation", "txn", "lease", "wait", "notify", "ack", "batch"];
     StaticIdentity = class {
       table;
       constructor(table) {
@@ -4930,16 +5157,24 @@ var init_service = __esm({
     DEFAULT_POLICY = {
       roles: {
         admin: { methods: "*" },
-        host: { methods: ["hello", "generation", "write", "read", "take", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "txn", "lease", "changes", "wait", "notify", "events", "ack"] },
-        member: { methods: ["hello", "generation", "write", "read", "take", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "txn", "lease", "changes", "wait", "notify", "events", "ack"] },
+        host: { methods: METHODS },
+        member: { methods: METHODS },
         resolution: { methods: ["hello", "pollOperation", "resolveOperation", "cancelOperation", "txn", "lease"] },
-        observer: { methods: ["hello", "generation", "read", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "changes", "notify", "events", "ack"] },
+        observer: { methods: ["hello", "generation", "read", "pollOperation", "resolveOperation", "cancelOperation", "readAll", "count", "stats", "spaces", "changes", "notify", "events", "ack"] },
         // own read and notify results, never a write
         unpaired: { methods: ["hello", "generation"] }
         // a device in the enrollment group: nothing but its own pairing (enroll.ts handles `enroll` and `enrollStatus` before the service)
       }
     };
     MergeTypeNotExclusive = class extends IllegalArgumentError {
+    };
+    LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+    LONE_IN_TEXT = /\\u[dD][89a-fA-F]/;
+    wellFormed = (v) => {
+      if (typeof v === "string") return v.replace(LONE_SURROGATE, "\uFFFD");
+      if (Array.isArray(v)) return v.map(wellFormed);
+      if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [wellFormed(k), wellFormed(x)]));
+      return v;
     };
     Bad = class extends Error {
     };
@@ -4972,6 +5207,7 @@ var init_service = __esm({
     };
     principalKey = (p) => p.agentId ? `${p.peerId}/${p.agentId}` : p.peerId;
     SpaceService = class {
+      resolutionGrant;
       o;
       policy;
       now;
@@ -5002,13 +5238,15 @@ var init_service = __esm({
         } catch {
           return JSON.stringify(fail("BadRequest", "the call is not JSON"));
         }
+        if (LONE_IN_TEXT.test(text2)) call = wellFormed(call);
         const reply2 = await this.handle(call, conn, maxFrameBytes, bytes13);
-        const textReply = JSON.stringify(reply2);
-        if (encodedBytes(reply2) > maxFrameBytes) return JSON.stringify(fail("ResourceExhausted", "the transport frame cannot carry this response"));
+        const textReply = encoded.get(reply2) ?? JSON.stringify(reply2);
+        if (Buffer.byteLength(textReply) > maxFrameBytes) return JSON.stringify(fail("ResourceExhausted", "the transport frame cannot carry this response"));
         return textReply;
       }
       async handle(call, conn, transportFrameBytes = DEFAULT_LIMITS.maxFrameBytes, rawBytes) {
         let responseFrame = transportFrameBytes;
+        if (rawBytes === void 0) call = wellFormed(call);
         try {
           if (!isObj(call) || typeof call.method !== "string") throw new Bad("a call is an object with a method");
           if (!METHODS.includes(call.method)) return fail("UnsupportedMethod", `unknown method ${call.method}`);
@@ -5049,7 +5287,7 @@ var init_service = __esm({
           if (isObj(frame2) && frame2.claimReceipt !== void 0 && typeof frame2.claimReceipt !== "boolean") throw new Bad("claimReceipt must be boolean");
           if (includeClaim) {
             if (!request) throw new Bad("claim receipt requires an original effect request");
-            this.allowed(id3, "resolveOperation");
+            this.resolutionGrant = this.allowed(id3, "resolveOperation");
           }
           const result = await this.dispatch(method, args, { id: id3, request, client, space, grant: grant2, frameBytes });
           const reply2 = { ok: true, result };
@@ -5057,14 +5295,16 @@ var init_service = __esm({
             try {
               const domain = rpcDomain(call, id3.principal), epoch2 = await this.o.epochForSpace?.(space) ?? this.o.primaryEpoch;
               const record2 = await client.resolveOperationRecord(request, domain.method, argHash(domain.method, domain.args), epoch2);
-              const resolutionGrant = this.allowed(id3, "resolveOperation");
+              const resolutionGrant = this.resolutionGrant;
               if ("result" in record2.resolution && isObj(record2.resolution.result) && Array.isArray(record2.resolution.result.types)) this.checkTypes(resolutionGrant, record2.resolution.result.types, "this retained result");
               const hostId = this.o.hostId ?? (await this.o.host.snapshot(Registry, this.o.ctx))?.hostId;
               if (hostId) reply2.claimReceipt = { protocol: "phi-spaces-claim-receipt-v1", hostId, ...record2 };
             } catch {
             }
           }
-          if (encodedBytes(reply2) > frameBytes) throw new ResourceExhausted("the configured frame cannot carry the result; use a compatible transport frame");
+          const text2 = JSON.stringify(reply2);
+          if (Buffer.byteLength(text2) > frameBytes) throw new ResourceExhausted("the configured frame cannot carry the result; use a compatible transport frame");
+          encoded.set(reply2, text2);
           return reply2;
         } catch (e) {
           if (e instanceof ResponseBudgetTooSmall && e.requiredBytes > responseFrame - 21) return fail("ResourceExhausted", "the configured frame cannot hold the next whole element");
@@ -5129,7 +5369,7 @@ var init_service = __esm({
             if (!isObj(a.entry.fields)) throw new Bad("entry.fields must be an object");
             this.checkTypes(grant2, [type, ...types ?? []], `type ${type}`);
             if (a.unique !== void 0 && (!Array.isArray(a.unique) || !a.unique.every((k) => typeof k === "string"))) throw new Bad("unique must be field names");
-            const lease = await client.write({ type, ...types ? { types } : {}, fields: a.entry.fields }, a.txn ?? null, duration2(a.leaseMs, "leaseMs", ANY), { request, ...a.unique === void 0 ? {} : { unique: a.unique } });
+            const lease = await client.write({ type, ...types ? { types } : {}, fields: a.entry.fields }, a.txn ?? null, duration2(a.leaseMs, "leaseMs", ANY), { request, ...a.unique === void 0 ? {} : { unique: a.unique }, ...a.transient === true ? { transient: true } : {} });
             return lease;
           }
           case "read":
@@ -5179,7 +5419,7 @@ var init_service = __esm({
                 maxBytes: Math.min(q.maxBytes === void 0 ? c.frameBytes - 21 : int(q.maxBytes, "chain.maxBytes", 1), c.frameBytes - 21)
               });
             }
-            const p = await client.readPage(t, { maxBytes: Math.min(a.maxBytes === void 0 ? c.frameBytes : int(a.maxBytes, "maxBytes", 1), c.frameBytes - 21), ...a.token === void 0 ? {} : { token: str(a.token, "token") }, after: a.cursor ?? null, txn: a.txn ?? null });
+            const p = await client.readPage(t, { maxBytes: Math.min(a.maxBytes === void 0 ? c.frameBytes : int(a.maxBytes, "maxBytes", 1), c.frameBytes - 21), ...a.token === void 0 ? {} : { token: str(a.token, "token") }, ...a.limit === void 0 ? {} : { limit: int(a.limit, "limit", 1) }, after: a.cursor ?? null, txn: a.txn ?? null });
             return p;
           }
           case "count": {
@@ -5189,7 +5429,47 @@ var init_service = __esm({
           }
           case "stats": {
             if (grant2.types !== "*") throw new Denied("aggregate stats need a role without type restrictions");
-            return await client.statsWithRevision();
+            const cpu = process.cpuUsage(), mem = process.memoryUsage();
+            return { ...await client.statsWithRevision(), process: { cpuMs: Math.round((cpu.user + cpu.system) / 1e3), rssBytes: mem.rss, heapBytes: mem.heapUsed, at: Date.now() } };
+          }
+          case "batch": {
+            if (this.o.merge?.(c.space)) throw new Bad("batch is not offered on a space with merged entry types (each write is merged on its own)");
+            if (!Array.isArray(a.ops) || a.ops.length === 0 || a.ops.length > 64) throw new Bad("ops must be 1 to 64 steps");
+            const ops = a.ops.map((x) => {
+              if (!isObj(x) || typeof x.op !== "string") throw new Bad("a step is an object with an op");
+              const txn = x.txn === void 0 || x.txn === null ? null : str(x.txn, "txn");
+              if (x.op === "begin") {
+                this.allowed(c.id, "txn");
+                return { op: "begin", lease: duration2(x.leaseMs, "leaseMs", ANY) };
+              }
+              if (x.op === "commit" || x.op === "abort") {
+                this.allowed(c.id, "txn");
+                if (txn === null) throw new Bad(`${x.op} needs a txn`);
+                return { op: x.op, txn };
+              }
+              if (x.op === "write") {
+                const g = this.allowed(c.id, "write");
+                if (!isObj(x.entry) || !isObj(x.entry.fields)) throw new Bad("entry with fields is required");
+                const type = str(x.entry.type, "entry.type");
+                const types = x.entry.types === void 0 ? void 0 : Array.isArray(x.entry.types) && x.entry.types.every((t) => typeof t === "string") ? x.entry.types : (() => {
+                  throw new Bad("entry.types must be strings");
+                })();
+                this.checkTypes(g, [type, ...types ?? []], `type ${type}`);
+                if (x.unique !== void 0 && (!Array.isArray(x.unique) || !x.unique.every((k) => typeof k === "string"))) throw new Bad("unique must be field names");
+                return { op: "write", entry: { type, ...types ? { types } : {}, fields: x.entry.fields }, txn, lease: duration2(x.leaseMs, "leaseMs", ANY), ...x.unique === void 0 ? {} : { unique: x.unique }, ...x.transient === true ? { transient: true } : {} };
+              }
+              if (x.op === "take" || x.op === "read") {
+                const g = this.allowed(c.id, x.op), t = template(x.template);
+                if (g.types !== "*") this.checkTypes(g, t?.type ? [t.type] : void 0, "this template");
+                return { op: x.op, template: t, txn };
+              }
+              throw new Bad(`unknown batch step ${x.op}`);
+            });
+            return await client.batch(ops, { request });
+          }
+          case "spaces": {
+            if (grant2.types !== "*") throw new Denied("listing spaces needs a role without type restrictions");
+            return (await listSpaces(this.o.host, this.o.ctx)).map((i) => ({ spaceId: i.spaceId, alias: i.alias, createdAt: i.createdAt }));
           }
           case "txn": {
             const action = str(a.action, "action");
@@ -5237,12 +5517,17 @@ var init_service = __esm({
           case "events": {
             this.checkConsumer(a.consumer, c.id);
             const end = this.now() + Math.min(optInt(a.waitMs, "waitMs") ?? 0, this.o.maxPollMs);
-            for (; ; ) {
-              const p = await client.events(c.id.principal, { ...a.mailboxEpoch === void 0 ? {} : { mailboxEpoch: str(a.mailboxEpoch, "mailboxEpoch") }, after: optInt(a.after, "after"), maxBytes: Math.min(a.maxBytes === void 0 ? c.frameBytes : int(a.maxBytes, "maxBytes", 1), c.frameBytes - 21) }, (p2) => {
-                for (const item of p2.events) if (item.event.entry) this.checkTypes(grant2, item.event.entry.types, "this mailbox event");
-              });
-              if (p.events.length || p.gap || this.now() >= end) return p;
-              await awaitWithContext(new Promise((r) => setTimeout(r, Math.min(50, Math.max(1, end - this.now())))), this.o.ctx);
+            const signal = end > this.now() ? this.o.wakeOnCommit ? await client.commitSignal({ gapMs: POLL_GAP_MS }) : sleepSignal : null;
+            try {
+              for (; ; ) {
+                const p = await client.events(c.id.principal, { ...a.mailboxEpoch === void 0 ? {} : { mailboxEpoch: str(a.mailboxEpoch, "mailboxEpoch") }, after: optInt(a.after, "after"), maxBytes: Math.min(a.maxBytes === void 0 ? c.frameBytes : int(a.maxBytes, "maxBytes", 1), c.frameBytes - 21) }, (p2) => {
+                  for (const item of p2.events) if (item.event.entry) this.checkTypes(grant2, item.event.entry.types, "this mailbox event");
+                });
+                if (p.events.length || p.gap || this.now() >= end) return p;
+                await awaitWithContext(signal.wait(Math.max(1, end - this.now())), this.o.ctx);
+              }
+            } finally {
+              await signal?.stop();
             }
           }
           case "ack":
@@ -5281,7 +5566,7 @@ var init_service = __esm({
           role: "single",
           principal: principalKey(c.id.principal),
           roles: c.id.roles,
-          features: [...METHODS, "write.unique", "read.chain"],
+          features: [...METHODS, "write.unique", "write.transient", "read.chain", "read.locked"],
           limits: { maxFrameBytes: Math.min(lim.maxFrameBytes, c.frameBytes), maxCommitBytes: lim.maxCommitBytes, maxEventBytes: lim.maxEventBytes, maxEntryBytes: lim.maxEntryBytes, maxPollMs: this.o.maxPollMs, maxPendingPerPrincipal: this.o.maxPendingPerPrincipal, maxPendingPerPeer: this.o.maxPendingPerPeer },
           capabilities: { snapshotPagination: true, mailboxes: true, completionProfiles: true, transactions: true, blockingTake: true, mode: "single" }
         };
@@ -5302,7 +5587,6 @@ var init_service = __esm({
         const refuse2 = (what) => {
           throw new MergeTypeNotExclusive(`${what} is not available for merge types (lww/set)`);
         };
-        const { entryChangeId: entryChangeId2 } = await Promise.resolve().then(() => (init_entry_replication(), entry_replication_exports));
         const view3 = (v) => ({ id: v.id, type: v.type, types: [v.type], fields: v.fields, owner: v.owner, expires: v.expiresAt ?? FOREVER, replicated: true });
         const matches2 = (t, v) => !t || (!t.type || t.type === v.type) && Object.entries(t.fields ?? {}).every(([k, x]) => JSON.stringify(x) === JSON.stringify(v.fields[k]));
         if (method === "write") {
@@ -5316,7 +5600,7 @@ var init_service = __esm({
           const ms2 = duration2(a.leaseMs, "leaseMs", ANY), expiresAt = ms2 === ANY || ms2 >= FOREVER ? null : this.now() + ms2;
           const changeRequest = changeRequestHash(c.id.principal, c.request);
           const change = await merge.controller.mutate(changeRequest, { kind: r.variant === "lww" ? "put" : "add", type, fields: a.entry.fields, owner: { ...c.id.principal }, expiresAt });
-          return { id: entryChangeId2(change), expires: expiresAt ?? FOREVER, replicated: true };
+          return { id: entryChangeId(change), expires: expiresAt ?? FOREVER, replicated: true };
         }
         if (method === "read" || method === "take" || method === "readAll" || method === "count" || method === "wait") {
           const t = template(a.template);
@@ -5338,7 +5622,7 @@ var init_service = __esm({
           if (prior) {
             const m = prior.mutation, target = m.kind === "remove" ? m.tags[0] : m.kind === "renew" ? m.tag : void 0;
             if (action === "cancel" && (m.kind === "delete" || m.kind === "remove" && target === id3)) return { state: "cancelled", replicated: true };
-            if (action === "renew" && (m.kind === "put" || m.kind === "renew" && target === id3)) return { expires: m.expiresAt ?? FOREVER, id: entryChangeId2(prior), replicated: true };
+            if (action === "renew" && (m.kind === "put" || m.kind === "renew" && target === id3)) return { expires: m.expiresAt ?? FOREVER, id: entryChangeId(prior), replicated: true };
             throw new RequestConflict("the request ID was used for another merge change");
           }
           const v = (await merge.controller.read()).find((x) => x.id === id3), r = v && rule(v.type);
@@ -5351,7 +5635,7 @@ var init_service = __esm({
           }
           const ms2 = duration2(a.ms, "ms", ANY), expiresAt = ms2 === ANY || ms2 >= FOREVER ? null : this.now() + ms2;
           const change = await merge.controller.mutate(changeRequest, r.variant === "lww" ? { kind: "put", type: v.type, fields: v.fields, owner, expiresAt } : { kind: "renew", type: v.type, tag: id3, fields: v.fields, owner, expiresAt });
-          return { expires: expiresAt ?? FOREVER, id: entryChangeId2(change), replicated: true };
+          return { expires: expiresAt ?? FOREVER, id: entryChangeId(change), replicated: true };
         }
         return void 0;
       }
@@ -5366,18 +5650,23 @@ var init_service = __esm({
         if (view3.resultExpired) throw new ResultExpired("the stored result has expired");
         if (view3.error) throw view3.error.code === "CompletionViolation" ? new CompletionViolation(view3.error.message) : new TransactionError(view3.error.message);
         if (view3.state === "cancelled") throw new OperationCancelled("the operation was cancelled");
-        return view3.state === "done" ? { state: "done", entry: view3.result ?? null } : { state: "pending", deadline: view3.deadline };
+        return view3.state === "done" ? { state: "done", entry: view3.result ?? null, ...view3.locked ? { locked: true } : {} } : { state: "pending", deadline: view3.deadline };
       }
       /** The state of an own request; waits up to `waitMs` (at most maxPollMs) for it to leave `pending`. Never extends a deadline. */
       async poll(a, c) {
         const t = this.target(a.targetRequest, c.id);
         const waitMs = Math.min(optInt(a.waitMs, "waitMs", 0) ?? 0, this.o.maxPollMs);
         const end = this.now() + waitMs;
-        for (; ; ) {
-          const v = await c.client.pollOperation(t);
-          if (v.result && isObj(v.result) && Array.isArray(v.result.types)) this.checkTypes(this.allowed(c.id, "pollOperation"), v.result.types, "this retained result");
-          if (v.state !== "pending" || v.restoredHistory || this.now() >= end) return v;
-          await awaitWithContext(new Promise((res) => setTimeout(res, Math.min(50, Math.max(1, end - this.now())))), this.o.ctx);
+        const signal = waitMs > 0 ? this.o.wakeOnCommit ? await c.client.commitSignal({ gapMs: POLL_GAP_MS }) : sleepSignal : null;
+        try {
+          for (; ; ) {
+            const v = await c.client.pollOperation(t);
+            if (v.result && isObj(v.result) && Array.isArray(v.result.types)) this.checkTypes(this.allowed(c.id, "pollOperation"), v.result.types, "this retained result");
+            if (v.state !== "pending" || v.restoredHistory || this.now() >= end) return v;
+            await awaitWithContext(signal.wait(Math.min(POLL_FALLBACK_MS, Math.max(1, end - this.now()))), this.o.ctx);
+          }
+        } finally {
+          await signal?.stop();
         }
       }
       /** Commit batches after a revision; `resync` tells the client to read pages again (history dropped or another stream). */
@@ -5387,17 +5676,22 @@ var init_service = __esm({
         const waitMs = Math.min(optInt(a.waitMs, "waitMs", 0) ?? 0, this.o.maxPollMs);
         const maxBytes = Math.min(a.maxBytes === void 0 ? c.frameBytes : int(a.maxBytes, "maxBytes", 1), c.frameBytes - 21);
         const end = this.now() + waitMs;
-        for (; ; ) {
-          let r;
-          try {
-            r = await c.client.changes(after, maxBytes === void 0 ? {} : { maxBytes });
-          } catch (e) {
-            if (e instanceof SnapshotExpired || e instanceof RevisionAhead) return { resync: true, reason: e instanceof SnapshotExpired ? "history dropped" : "ahead of this stream" };
-            throw e;
+        const signal = waitMs > 0 ? this.o.wakeOnCommit ? await c.client.commitSignal() : sleepSignal : null;
+        try {
+          for (; ; ) {
+            let r;
+            try {
+              r = await c.client.changes(after, maxBytes === void 0 ? {} : { maxBytes });
+            } catch (e) {
+              if (e instanceof SnapshotExpired || e instanceof RevisionAhead) return { resync: true, reason: e instanceof SnapshotExpired ? "history dropped" : "ahead of this stream" };
+              throw e;
+            }
+            if (a.streamId !== void 0 && a.streamId !== r.streamId) return { resync: true, reason: "another stream", streamId: r.streamId };
+            if (r.batches.length > 0 || this.now() >= end) return r;
+            await awaitWithContext(signal.wait(Math.max(1, end - this.now())), this.o.ctx);
           }
-          if (a.streamId !== void 0 && a.streamId !== r.streamId) return { resync: true, reason: "another stream", streamId: r.streamId };
-          if (r.batches.length > 0 || this.now() >= end) return r;
-          await awaitWithContext(new Promise((res) => setTimeout(res, Math.min(50, Math.max(1, end - this.now())))), this.o.ctx);
+        } finally {
+          await signal?.stop();
         }
       }
       // ---- errors
@@ -5435,6 +5729,7 @@ var init_service = __esm({
         if (e instanceof InvalidAck) return fail("InvalidAck", e.message);
         if (e instanceof TransactionError || e instanceof UnknownLeaseError) return fail("TransactionError", e.message);
         if (e instanceof MergeTypeNotExclusive) return fail("MergeTypeNotExclusive", e.message);
+        if (e instanceof UniqueConflict) return fail("UniqueConflict", e.message);
         if (e instanceof ReplicationConflict) return fail("BadRequest", e.message);
         if (e instanceof ReplicationClockError) return fail("ResourceExhausted", "replication clock: " + e.message);
         if (e instanceof IllegalArgumentError || e instanceof TypeError) return fail("BadRequest", e.message);
@@ -6264,21 +6559,21 @@ var SqliteRecoveryRegister = class {
   }
   async compareAndSet(key2, expected, value) {
     if (!key2 || expected !== null && (!Number.isSafeInteger(expected) || expected < 1)) throw new RegisterConflict("invalid register key/version");
-    const encoded = canonicalJson(value);
+    const encoded2 = canonicalJson(value);
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const prior = this.db.prepare("SELECT version,value FROM records WHERE key=?").get(key2);
       if ((prior?.version ?? null) !== expected) throw new RegisterConflict("register version changed");
-      validateErasureRegisterUpdate(key2, JSON.parse(encoded), prior ? JSON.parse(prior.value) : null, (relatedKey) => {
+      validateErasureRegisterUpdate(key2, JSON.parse(encoded2), prior ? JSON.parse(prior.value) : null, (relatedKey) => {
         const related = this.db.prepare("SELECT value FROM records WHERE key=?").get(relatedKey);
         return related ? JSON.parse(related.value) : null;
       }, (message) => {
         throw new RegisterConflict(message);
       });
       const version = (expected ?? 0) + 1;
-      this.db.prepare("INSERT INTO records(key,version,value) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET version=excluded.version,value=excluded.value").run(key2, version, encoded);
+      this.db.prepare("INSERT INTO records(key,version,value) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET version=excluded.version,value=excluded.value").run(key2, version, encoded2);
       this.db.exec("COMMIT");
-      return { version, value: JSON.parse(encoded) };
+      return { version, value: JSON.parse(encoded2) };
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
@@ -6329,15 +6624,15 @@ async function serveSpace(service, o) {
   const maxConns = o.maxConnections ?? 64;
   const maxInflight = o.maxInflightPerConnection ?? 32;
   const idleMs = o.idleMs ?? 5 * 6e4;
-  const open2 = /* @__PURE__ */ new Set();
+  const open3 = /* @__PURE__ */ new Set();
   let owned;
   if ("path" in o.listen) await prepareSocketPath(o.listen.path);
   const server = net.createServer((socket) => {
-    if (open2.size >= maxConns) {
+    if (open3.size >= maxConns) {
       socket.destroy();
       return;
     }
-    open2.add(socket);
+    open3.add(socket);
     socket.setNoDelay(true);
     socket.setTimeout(idleMs, () => socket.destroy());
     const reader = new FrameReader(maxFrame - HEADER);
@@ -6374,9 +6669,9 @@ async function serveSpace(service, o) {
       }
     });
     socket.on("error", () => socket.destroy());
-    socket.on("close", () => open2.delete(socket));
+    socket.on("close", () => open3.delete(socket));
   });
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve2, reject) => {
     server.once("error", reject);
     if ("path" in o.listen) {
       server.listen(o.listen.path, () => {
@@ -6384,19 +6679,19 @@ async function serveSpace(service, o) {
           const path = o.listen.path;
           chmodSync2(path, 384);
           owned = lstatSync3(path);
-          resolve();
+          resolve2();
         } catch (e) {
           server.close();
           reject(e);
         }
       });
-    } else server.listen(o.listen.port, o.listen.host, resolve);
+    } else server.listen(o.listen.port, o.listen.host, resolve2);
   });
   return {
     address: () => server.address(),
-    connections: () => open2.size,
+    connections: () => open3.size,
     close: async () => {
-      for (const s of open2) s.destroy();
+      for (const s of open3) s.destroy();
       await new Promise((r) => server.close(() => r()));
       if ("path" in o.listen) {
         try {
@@ -6418,7 +6713,7 @@ async function prepareSocketPath(path) {
     throw e;
   }
   if (!old.isSocket()) throw new Error(`refusing to replace a non-socket path: ${path}`);
-  const stale = await new Promise((resolve, reject) => {
+  const stale = await new Promise((resolve2, reject) => {
     const probe2 = net.createConnection(path);
     const timer = setTimeout(() => {
       probe2.destroy();
@@ -6427,13 +6722,13 @@ async function prepareSocketPath(path) {
     probe2.once("connect", () => {
       clearTimeout(timer);
       probe2.destroy();
-      resolve(false);
+      resolve2(false);
     });
     probe2.once("error", (e) => {
       clearTimeout(timer);
       probe2.destroy();
       const code = e.code;
-      if (code === "ECONNREFUSED" || code === "ENOENT") resolve(true);
+      if (code === "ECONNREFUSED" || code === "ENOENT") resolve2(true);
       else reject(e);
     });
   });
@@ -6463,7 +6758,7 @@ function socketTransport(target, o = {}) {
   const connect = () => {
     if (closed) return Promise.reject(new Error("closed"));
     if (socket && !socket.destroyed) return Promise.resolve(socket);
-    connecting ??= new Promise((resolve, reject) => {
+    connecting ??= new Promise((resolve2, reject) => {
       const s = "path" in target ? net.createConnection(target.path) : net.createConnection({ port: target.port, host: target.host, ...o.localAddress ? { localAddress: o.localAddress } : {} });
       opening = s;
       const reader = new FrameReader(maxFrame - HEADER);
@@ -6472,7 +6767,7 @@ function socketTransport(target, o = {}) {
       s.once("connect", () => {
         clearTimeout(timer);
         socket = s;
-        resolve(s);
+        resolve2(s);
       });
       s.on("data", (chunk) => {
         try {
@@ -6508,7 +6803,7 @@ function socketTransport(target, o = {}) {
     async request(text2) {
       if (Buffer.byteLength(text2) + HEADER > maxFrame) throw new Error("request exceeds maxFrameBytes");
       const s = await connect();
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve2, reject) => {
         const id3 = nextId++ >>> 0 || nextId++;
         const timer = o.requestTimeoutMs === void 0 ? void 0 : setTimeout(() => {
           if (pending.delete(id3)) {
@@ -6520,7 +6815,7 @@ function socketTransport(target, o = {}) {
           clearTimeout(timer);
           f(v);
         };
-        pending.set(id3, { socket: s, resolve: done(resolve), reject: done(reject) });
+        pending.set(id3, { socket: s, resolve: done(resolve2), reject: done(reject) });
         s.write(frame(id3, text2), (e) => {
           if (e) {
             pending.delete(id3);
@@ -6746,6 +7041,7 @@ function beginRestore(s, now, o) {
   s.regs = [];
   s.waiters = [];
   s.outbox = [];
+  delete s.outboxBytes;
   s.jobs = [];
   s.releaseQueue = [];
   s.mailboxes = { boxes: {} };
@@ -6901,10 +7197,10 @@ var RecoveryController = class {
   async submit(request) {
     if (![request.recoveryId, request.space, request.snapshotRef, request.targetHostId, request.expectedDataIncarnation].every((v) => typeof v === "string" && v.length > 0 && v.length <= 512) || request.recoveryId.length > 256 || request.targetHostId !== this.o.hostId || !Number.isSafeInteger(request.expectedPrimaryEpoch) || request.expectedPrimaryEpoch < 0) throw new RecoveryBlocked("invalid recovery request or target");
     const argsHash = digestJson(request);
-    const existing = (await this.o.host.snapshot(RecoveryJobs, this.o.ctx))?.jobs[request.recoveryId];
-    if (existing) {
-      if (existing.argsHash !== argsHash) throw new RegisterConflict("recovery id has different arguments");
-      return plain(existing);
+    const existing2 = (await this.o.host.snapshot(RecoveryJobs, this.o.ctx))?.jobs[request.recoveryId];
+    if (existing2) {
+      if (existing2.argsHash !== argsHash) throw new RegisterConflict("recovery id has different arguments");
+      return plain(existing2);
     }
     const source = await this.o.loadSnapshot(request.snapshotRef);
     if (source.spaceId !== request.space) throw new RecoveryBlocked("snapshot belongs to another space");
@@ -6963,9 +7259,9 @@ var RecoveryController = class {
     }
     const s = await snapshotSpace(this.o.host, job.request.space, this.o.ctx);
     if (!s?.restore || s.restore.recoveryId !== id3 || s.incarnation !== job.incarnation || s.primaryEpoch !== job.primaryEpoch || !job.incarnation || job.primaryEpoch === void 0) throw new RecoveryBlocked("restore state was lost or changed");
-    const published = await this.o.external.get(`data-transition:${job.request.space}`);
-    if (!published || published.value.argsHash !== job.argsHash || published.value.incarnation && (published.value.incarnation !== job.incarnation || published.value.primaryEpoch !== job.primaryEpoch)) throw new RecoveryBlocked("published recovery tuple changed");
-    if (!published.value.incarnation) await this.o.external.compareAndSet(`data-transition:${job.request.space}`, published.version, { ...published.value, incarnation: job.incarnation, primaryEpoch: job.primaryEpoch });
+    const published2 = await this.o.external.get(`data-transition:${job.request.space}`);
+    if (!published2 || published2.value.argsHash !== job.argsHash || published2.value.incarnation && (published2.value.incarnation !== job.incarnation || published2.value.primaryEpoch !== job.primaryEpoch)) throw new RecoveryBlocked("published recovery tuple changed");
+    if (!published2.value.incarnation) await this.o.external.compareAndSet(`data-transition:${job.request.space}`, published2.version, { ...published2.value, incarnation: job.incarnation, primaryEpoch: job.primaryEpoch });
     const ack = await this.o.acknowledgeControl(job);
     if (ack.recoveryId !== id3 || ack.space !== job.request.space || ack.incarnation !== job.incarnation || ack.primaryEpoch !== job.primaryEpoch || ack.authorityId !== this.o.authorityId) throw new RecoveryBlocked("control acknowledgement disagrees with restored tuple");
     if (now < s.restore.waitUntil) return job;
@@ -7713,7 +8009,8 @@ var CODE_ERRORS = {
   MergeTypeNotExclusive: (m) => new MergeTypeNotExclusive(m),
   MailboxEpochMismatch: (m) => new MailboxEpochMismatch(m),
   InvalidAck: (m) => new InvalidAck(m),
-  BadRequest: (m) => new IllegalArgumentError(m)
+  BadRequest: (m) => new IllegalArgumentError(m),
+  UniqueConflict: (m) => new UniqueConflict(m)
 };
 var toError = (e) => CODE_ERRORS[e.code]?.(e.message, e.requiredBytes) ?? new RemoteError(e.code, e.message, e.requiredBytes);
 var TransportFailure = class extends Error {
@@ -7968,19 +8265,32 @@ var RemoteSpace = class {
   // ---- SpaceLike
   async write(entry, txn = null, lease = ANY, o = {}) {
     if (o.unique && !(await this.info()).features.includes("write.unique")) throw new UnsupportedOperation("server does not support atomic unique writes");
-    return await this.mutate("write", { entry, txn, leaseMs: leaseArg(lease), ...o.unique ? { unique: o.unique } : {} }, o);
+    if (o.transient && !(await this.info()).features.includes("write.transient")) throw new UnsupportedOperation("server does not support transient writes");
+    return await this.mutate("write", { entry, txn, leaseMs: leaseArg(lease), ...o.unique ? { unique: o.unique } : {}, ...o.transient ? { transient: true } : {} }, o);
+  }
+  /** Several steps in one call and one commit (PhiSpaces.batch): all happen, or none. Throws UnsupportedOperation on a
+   *  server without it. */
+  async batch(ops, o = {}) {
+    if (!(await this.info()).features.includes("batch")) throw new UnsupportedOperation("server does not support batch");
+    const wire = ops.map((x) => x.op === "begin" ? { op: "begin", leaseMs: leaseArg(x.lease ?? ANY) } : x.op === "write" ? { op: "write", entry: x.entry, txn: x.txn ?? null, leaseMs: leaseArg(x.lease ?? ANY), ...x.unique ? { unique: x.unique } : {}, ...x.transient ? { transient: true } : {} } : x.op === "take" || x.op === "read" ? { op: x.op, template: x.template, txn: x.txn ?? null } : { op: x.op, txn: x.txn ?? null });
+    return await this.mutate("batch", { ops: wire }, o);
   }
   read(tmpl2, timeout, o = {}) {
-    return this.blocking("read", tmpl2, timeout, o, false);
+    return this.blocking("read", tmpl2, timeout, o, false).then((r) => r.entry);
   }
   readIfExists(tmpl2, timeout, o = {}) {
-    return this.blocking("read", tmpl2, timeout, o, true);
+    return this.blocking("read", tmpl2, timeout, o, true).then((r) => r.entry);
   }
   take(tmpl2, timeout, o = {}) {
-    return this.blocking("take", tmpl2, timeout, o, false);
+    return this.blocking("take", tmpl2, timeout, o, false).then((r) => r.entry);
   }
   takeIfExists(tmpl2, timeout, o = {}) {
-    return this.blocking("take", tmpl2, timeout, o, true);
+    return this.blocking("take", tmpl2, timeout, o, true).then((r) => r.entry);
+  }
+  /** A readIfExists/takeIfExists that also reports a miss caused only by entries locked in other transactions. */
+  async probe(tmpl2, timeout, o = {}) {
+    if (!(await this.info()).features.includes("read.locked")) throw new UnsupportedOperation("server does not report locked misses");
+    return this.blocking(o.take === true ? "take" : "read", tmpl2, timeout, o, true);
   }
   async blocking(method, tmpl2, timeout, o, ifExists) {
     if (o.once) throw new IllegalArgumentError("`once` is a local hook: a remote call keeps its outcome under its request identity instead");
@@ -7997,7 +8307,7 @@ var RemoteSpace = class {
     const call = () => this.send({ method, request, args }, unknown("the client stopped waiting; resolve the same request"), end).catch(sealedWait);
     let r = await call();
     for (; ; ) {
-      if (r.state === "done") return r.entry ?? null;
+      if (r.state === "done") return { entry: r.entry ?? null, locked: r.locked === true };
       if (r.state === "sealed") {
         r = await call();
         continue;
@@ -8014,7 +8324,7 @@ var RemoteSpace = class {
       if (view3.unknownOutcome) throw new OutcomeUnknown(request, "restored history cannot establish the original outcome");
       if (view3.error) throw toError(view3.error);
       if (view3.state === "cancelled") throw new OperationCancelled(`request ${request.requestId} was cancelled`);
-      if (view3.state === "done") return view3.result ?? null;
+      if (view3.state === "done") return { entry: view3.result ?? null, locked: view3.locked === true };
       r = { state: "pending" };
     }
   }
@@ -8056,7 +8366,7 @@ var RemoteSpace = class {
   }
   async readPage(tmpl2 = null, o = {}) {
     await this.info();
-    const args = { template: tmpl2, ...o.maxBytes === void 0 ? {} : { maxBytes: o.maxBytes }, ...o.token === void 0 ? {} : { token: o.token }, cursor: o.after ?? null, txn: o.txn ?? null };
+    const args = { template: tmpl2, ...o.maxBytes === void 0 ? {} : { maxBytes: o.maxBytes }, ...o.token === void 0 ? {} : { token: o.token }, ...o.limit === void 0 ? {} : { limit: o.limit }, cursor: o.after ?? null, txn: o.txn ?? null };
     return await this.send({ method: "readAll", args });
   }
   /** Like the local `readAll`: all entries, or the first `limit` when supplied, fetched page by page. */
@@ -8066,7 +8376,7 @@ var RemoteSpace = class {
     const out = [];
     let after = null;
     do {
-      const p = await this.readPage(tmpl2, { after, txn: o.txn ?? null });
+      const p = await this.readPage(tmpl2, { after, txn: o.txn ?? null, ...o.limit === void 0 ? {} : { limit } });
       out.push(...p.items);
       after = p.next;
     } while (after !== null && out.length < limit);
@@ -8083,8 +8393,17 @@ var RemoteSpace = class {
     return (await this.send({ method: "count", args: { template: tmpl2, txn } })).value;
   }
   async stats() {
+    return (await this.statsWithRevision()).stats;
+  }
+  /** The stats with the revision they were read at (like the local PhiSpaces): two reads tell how many commits came between. */
+  /** `process`: the serving process's CPU time and memory (servers since 2026-10-28; absent from older ones). */
+  async statsWithRevision() {
     await this.info();
-    return (await this.send({ method: "stats" })).stats;
+    return await this.send({ method: "stats" });
+  }
+  /** The spaces of the service (alias, id, creation); a viewer finds the ones created at runtime with it. */
+  async spaces() {
+    return await this.send({ method: "spaces" });
   }
   async createTransaction(lease = ANY, o = {}) {
     return await this.mutate("txn", { action: "begin", leaseMs: leaseArg(lease) }, o);
@@ -8403,11 +8722,11 @@ var MembershipController = class {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(member.id) || ["constructor", "prototype", "__proto__"].includes(member.id) || member.target.authorityId !== this.o.authorityId) throw new RoutingConflict("invalid Member identity/authority");
     const h = hash3([kind, member, newDefault ?? null]);
     let op = await this.change(async (d) => {
-      const existing = d.operations[id3];
-      if (existing) {
-        if (existing.hash !== h)
+      const existing2 = d.operations[id3];
+      if (existing2) {
+        if (existing2.hash !== h)
           throw new RoutingConflict("command ID changed arguments");
-        return copy4(existing);
+        return copy4(existing2);
       }
       if (Object.values(d.operations).some((o2) => !["completed", "failed"].includes(o2.phase)))
         throw new RoutingConflict("unresolved membership transition");
@@ -8531,9 +8850,9 @@ var MembershipController = class {
       }
       const { current, latest: latest2 } = await this.currentPolicy(op), pushId = policyPushId(id3, latest2.policyVersion);
       await this.call(id3, op, "activate", op.policy);
-      for (const existing of Object.values(current.members))
-        if (existing.id !== member.id && ["active", "draining"].includes(existing.state))
-          await this.call(pushId, { ...op, member: existing }, "policy", latest2);
+      for (const existing2 of Object.values(current.members))
+        if (existing2.id !== member.id && ["active", "draining"].includes(existing2.state))
+          await this.call(pushId, { ...op, member: existing2 }, "policy", latest2);
       if (latest2.policyVersion > op.policy.policyVersion)
         await this.call(pushId, op, "policy", latest2);
       await this.o.host.commit(async (tx) => {
@@ -8604,9 +8923,9 @@ var MembershipController = class {
         }, this.o.ctx);
       }
       const { current, latest: latest2 } = await this.currentPolicy(op), pushId = policyPushId(id3, latest2.policyVersion);
-      for (const existing of Object.values(current.members))
-        if (existing.id !== member.id && ["active", "draining"].includes(existing.state))
-          await this.call(pushId, { ...op, member: existing }, "policy", latest2);
+      for (const existing2 of Object.values(current.members))
+        if (existing2.id !== member.id && ["active", "draining"].includes(existing2.state))
+          await this.call(pushId, { ...op, member: existing2 }, "policy", latest2);
       await this.call(id3, op, "detach");
       op.phase = "completed";
       await save();
@@ -10414,13 +10733,13 @@ var copy8 = canonicalCopy;
 var zero = "0".repeat(64);
 var CODECS = { own: OWN_CODEC };
 var PI_DURABLE_JOURNAL = "this journal belongs to a pi-durable store; pi-durable stores are discarded, not taken over (decision D6, docs/umstellung-u0-bestand.md): set the Space up anew on the own store";
-var exact2 = (v, keys) => Object.keys(v).sort().join(",") === [...keys].sort().join(",");
+var exact3 = (v, keys) => Object.keys(v).sort().join(",") === [...keys].sort().join(",");
 var name2 = (v) => typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(v);
 var integer = (v) => Number.isSafeInteger(v) && v >= 0;
 var durabilityOf = (c) => c.durability ?? "sync";
 function configOf2(input) {
   const c = copy8(input), base = ["spaceId", "authorityId", "primaryEpoch", "replicaConfigVersion", "primaryReplica", "standbyReplica"];
-  if (!c || !(exact2(c, base) || exact2(c, [...base, "durability"])) || ![c.spaceId, c.authorityId, c.primaryReplica].every(name2) || !integer(c.primaryEpoch) || c.primaryEpoch < 1 || !integer(c.replicaConfigVersion) || c.replicaConfigVersion < 1) throw new PrimarySyncBlocked("invalid fixed primary/standby configuration");
+  if (!c || !(exact3(c, base) || exact3(c, [...base, "durability"])) || ![c.spaceId, c.authorityId, c.primaryReplica].every(name2) || !integer(c.primaryEpoch) || c.primaryEpoch < 1 || !integer(c.replicaConfigVersion) || c.replicaConfigVersion < 1) throw new PrimarySyncBlocked("invalid fixed primary/standby configuration");
   if (c.durability !== void 0 && !["sync", "single"].includes(c.durability)) throw new PrimarySyncBlocked("invalid fixed primary/standby configuration");
   if (durabilityOf(c) === "sync" ? !name2(c.standbyReplica) || c.primaryReplica === c.standbyReplica : c.standbyReplica !== null) throw new PrimarySyncBlocked("invalid fixed primary/standby configuration");
   return c;
@@ -10582,13 +10901,13 @@ var PrimarySyncJournal = class {
   /** Validates an entry against the configuration in force before it. */
   validate(i, current) {
     const keys1 = ["version", "config", "revision", "previousHash", "batchHash", "deltas", "validatedAt", "hash"], keys2 = [...keys1, "previousConfigHash", "reason"], keys3 = [...keys1, "bootstrap"];
-    if (!i || !(i.version === 1 && exact2(i, keys1) || i.version === 2 && exact2(i, keys2) || i.version === 3 && exact2(i, keys3)) || !integer(i.revision) || i.revision < 1 || !integer(i.validatedAt) || !Array.isArray(i.deltas)) throw new PrimarySyncBlocked("invalid or oversized commit intent");
+    if (!i || !(i.version === 1 && exact3(i, keys1) || i.version === 2 && exact3(i, keys2) || i.version === 3 && exact3(i, keys3)) || !integer(i.revision) || i.revision < 1 || !integer(i.validatedAt) || !Array.isArray(i.deltas)) throw new PrimarySyncBlocked("invalid or oversized commit intent");
     if (Buffer.byteLength(canonical3(i)) > this.maxIntentBytes) throw new SyncJournalFull(`oversized commit intent (at most ${this.maxIntentBytes} bytes)`);
     if (i.version === 1) {
       if (canonical3(i.config) !== canonical3(current) || i.deltas.length < 2) throw new PrimarySyncBlocked("invalid or oversized commit intent");
     } else if (i.version === 3) {
       const b = i.bootstrap;
-      if (canonical3(i.config) !== canonical3(current) || !b || !exact2(b, ["index", "total", "storeHash"]) || !integer(b.index) || !integer(b.total) || b.total < 1 || b.index >= b.total || i.revision !== b.index + 1 || !/^[0-9a-f]{64}$/.test(String(b.storeHash)) || i.deltas.length < 1) throw new PrimarySyncBlocked("invalid bootstrap chunk");
+      if (canonical3(i.config) !== canonical3(current) || !b || !exact3(b, ["index", "total", "storeHash"]) || !integer(b.index) || !integer(b.total) || b.total < 1 || b.index >= b.total || i.revision !== b.index + 1 || !/^[0-9a-f]{64}$/.test(String(b.storeHash)) || i.deltas.length < 1) throw new PrimarySyncBlocked("invalid bootstrap chunk");
       for (const w of i.deltas.slice(0, -1)) if (!this.codec.bootstrapWrite(w)) throw new PrimarySyncBlocked("a bootstrap chunk only creates records");
     } else {
       if (i.previousConfigHash !== hash7(current) || typeof i.reason !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(i.reason) || i.deltas.length !== 1) throw new PrimarySyncBlocked("invalid replica configuration entry");
@@ -10612,9 +10931,9 @@ var PrimarySyncJournal = class {
     const before = i.revision > 1 ? this.intent(i.revision - 1) : null;
     if (i.version === 3 && before && (before.version !== 3 || before.bootstrap.total !== i.bootstrap.total || before.bootstrap.storeHash !== i.bootstrap.storeHash)) throw new PrimarySyncBlocked("bootstrap chunks must start the chain without gaps");
     if (i.version !== 3 && before?.version === 3 && before.bootstrap.index !== before.bootstrap.total - 1) throw new PrimarySyncBlocked("the bootstrap is not complete");
-    const encoded = canonical3(i), used = this.db.prepare("SELECT COALESCE(SUM(length(CAST(intent AS BLOB))),0) AS n FROM sync_intents").get().n;
-    if (used + Buffer.byteLength(encoded) > this.maxHistoryBytes) throw new SyncJournalFull("sync history is full; no committed result was discarded");
-    this.db.prepare("INSERT INTO sync_intents(revision,hash,intent) VALUES(?,?,?)").run(i.revision, i.hash, encoded);
+    const encoded2 = canonical3(i), used = this.db.prepare("SELECT COALESCE(SUM(length(CAST(intent AS BLOB))),0) AS n FROM sync_intents").get().n;
+    if (used + Buffer.byteLength(encoded2) > this.maxHistoryBytes) throw new SyncJournalFull("sync history is full; no committed result was discarded");
+    this.db.prepare("INSERT INTO sync_intents(revision,hash,intent) VALUES(?,?,?)").run(i.revision, i.hash, encoded2);
     this.configs.push(copy8(i.config));
     this.usedBytes = void 0;
   }
@@ -10629,10 +10948,10 @@ var PrimarySyncJournal = class {
   }
   seal(deltas, validatedAt) {
     return this.sealEntry((head) => {
-      const open2 = this.openTransitionIds();
+      const open3 = this.openTransitionIds();
       const last = head.revision ? this.intent(head.revision) : null;
       if (last?.version === 3 && last.bootstrap.index !== last.bootstrap.total - 1) throw new PrimarySyncBlocked("the store bootstrap is not complete; finish it before new work");
-      if (open2.length) throw new PrimarySyncBlocked(`replica transition ${open2[0]} in progress; writes are paused`);
+      if (open3.length) throw new PrimarySyncBlocked(`replica transition ${open3[0]} in progress; writes are paused`);
       return { version: 1, config: this.config, revision: head.revision + 1, previousHash: head.hash, batchHash: hash7(deltas.slice(0, -1)), deltas: copy8(deltas), validatedAt };
     });
   }
@@ -10711,8 +11030,8 @@ var PrimarySyncJournal = class {
     return this.transaction(() => {
       const old = this.meta("transition:" + id3);
       if (old) return JSON.parse(old);
-      const open2 = this.openTransitionIds();
-      if (open2.length) throw new PrimarySyncBlocked(`replica transition ${open2[0]} is still open; resume or abandon it first`);
+      const open3 = this.openTransitionIds();
+      if (open3.length) throw new PrimarySyncBlocked(`replica transition ${open3[0]} is still open; resume or abandon it first`);
       this.setMeta("transition:" + id3, canonical3(record2));
       return record2;
     });
@@ -11471,7 +11790,7 @@ var isObject = (v) => typeof v === "object" && v !== null;
 var latest = (s) => s.copy ?? s.base;
 var shallow = (o) => Array.isArray(o) ? o.slice() : Object.assign(Object.create(Object.getPrototypeOf(o)), o);
 var own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-function draftOf(base, parts = []) {
+function draftOf(base, parts = [], o = {}) {
   if (!isObject(base)) throw new TypeError("a draft needs an object");
   const partKind = new Map(parts.map((p) => [p.path.join("."), p.kind]));
   const states = [];
@@ -11517,6 +11836,7 @@ function draftOf(base, parts = []) {
   const objectHandler = (s) => ({
     get(_t, k) {
       if (k === STATE) return s;
+      if (k === COMMITTED) return s.kind === "array" && s.copy === null ? s.base : void 0;
       if (s.kind === "array" && (readMethods.has(k) || writeMethods.has(k))) return partMethod(s, k);
       const cur = latest(s), v = Reflect.get(cur, k);
       if (typeof k === "symbol" || !isObject(v)) return v;
@@ -11620,6 +11940,10 @@ function draftOf(base, parts = []) {
     const obj = s ? s.copy ?? s.base : v;
     seen.set(v, obj);
     if (s?.kind === "array") {
+      if (o.skipUnchangedRecords && ![...s.assigned].some((v2) => stateOf2(v2))) {
+        for (const v2 of s.assigned) fresh.push(finalize(v2));
+        return obj;
+      }
       const a = obj;
       for (let i = 0; i < a.length; i++) {
         const c = a[i];
@@ -11635,10 +11959,10 @@ function draftOf(base, parts = []) {
     }
     return obj;
   };
-  const hasDraftInside = (o, depth = 0) => {
+  const hasDraftInside = (o2, depth = 0) => {
     if (depth > 64) return false;
-    for (const k of Object.keys(o)) {
-      const c = o[k];
+    for (const k of Object.keys(o2)) {
+      const c = o2[k];
       if (!isObject(c)) continue;
       if (stateOf2(c)) return true;
       if (diskMapOf(c)) continue;
@@ -11671,8 +11995,7 @@ function draftOf(base, parts = []) {
       return finalize(root);
     },
     revoke() {
-      done = true;
-      for (const s of states) s.revoke();
+      end();
     },
     discard() {
       if (done) return;
@@ -11694,6 +12017,7 @@ function detach(v) {
 }
 
 // src/store/host.ts
+init_types();
 var inCommit = new AsyncLocalStorage3();
 var HOST_CLOSED = "Session is closed";
 var addr = (kind, key2) => key2 === null ? kind : `${kind}\0${key2}`;
@@ -11707,6 +12031,7 @@ var Watch = class {
   #resolve;
   #ctx;
   #drop;
+  #onAbort = () => this.finish({ reason: "cancelled" });
   constructor(value, ctx, drop) {
     this.value = value;
     this.#ctx = ctx;
@@ -11714,7 +12039,7 @@ var Watch = class {
     this.closed = new Promise((r) => {
       this.#resolve = r;
     });
-    ctx.abortSignal?.addEventListener("abort", () => this.finish({ reason: "cancelled" }), { once: true });
+    ctx.abortSignal?.addEventListener("abort", this.#onAbort, { once: true });
   }
   start(listener) {
     if (this.#listener) throw new Error("a watch has one listener");
@@ -11745,6 +12070,7 @@ var Watch = class {
   finish(end) {
     if (this.#end) return;
     this.#end = end;
+    this.#ctx.abortSignal?.removeEventListener("abort", this.#onAbort);
     this.#drop(this);
     this.#resolve(end);
   }
@@ -11764,8 +12090,51 @@ var OwnStoreHost = class {
   #durable = Promise.resolve();
   /** A write failed: the host takes no more work (plan 4.1: its memory may hold what never reached the disk). */
   #failure = null;
-  constructor(ledger) {
+  /** Memory budget: the records of the parts of the documents held (a document's weight is 1 plus its records). */
+  #budget;
+  #weights = /* @__PURE__ */ new Map();
+  #weight = 0;
+  /** Commits handed to the ledger and not yet durable, per document: those are not dropped. */
+  #unsettled = /* @__PURE__ */ new Map();
+  #running = false;
+  /** When each document was last used: one used within `hotMs` is not dropped, so a working set larger than the budget
+   *  costs memory instead of a reload for every commit. */
+  #usedAt = /* @__PURE__ */ new Map();
+  #hotMs;
+  /** A commit that appends to a part array (the change history) does not walk its unchanged records (store/draft.ts).
+   *  Off by default; spaces-mmo turns it on (its space host), where it is tested under load. */
+  skipUnchangedRecords = false;
+  constructor(ledger, o = {}) {
     this.#ledger = ledger;
+    this.#budget = ledger.forget ? o.memoryBudget ?? Infinity : Infinity;
+    this.#hotMs = o.hotMs ?? 250;
+  }
+  #weigh(a, doc, parts) {
+    this.#weight -= this.#weights.get(a) ?? 0;
+    let w = doc ? 1 : 0;
+    for (const p of doc ? parts ?? [] : []) {
+      const v = partAt(doc.value, p.path);
+      if (Array.isArray(v)) w += v.length;
+      else if (v !== null && typeof v === "object" && !diskMapOf(v)) w += Object.keys(v).length;
+    }
+    this.#weights.set(a, w);
+    this.#weight += w;
+  }
+  /** Drops the documents untouched for longest while the budget is exceeded — never one that is watched, was changed
+   *  by a commit not yet durable, or is in use by the commit running. Between commits only. */
+  #trim() {
+    if (this.#weight <= this.#budget || this.#running) return;
+    const now = Date.now();
+    for (const a of [...this.#docs.keys()]) {
+      if (this.#weight <= this.#budget) break;
+      if (this.#watches.get(a)?.size || this.#unsettled.has(a) || now - (this.#usedAt.get(a) ?? 0) < this.#hotMs) continue;
+      this.#usedAt.delete(a);
+      const d = this.#docs.get(a);
+      this.#docs.delete(a);
+      this.#weigh(a, null);
+      this.#weights.delete(a);
+      if (d) this.#ledger.forget(d.kind, d.key);
+    }
   }
   #usable() {
     if (this.#closed) throw new Error(HOST_CLOSED);
@@ -11773,7 +12142,16 @@ var OwnStoreHost = class {
   }
   #committed(kind, key2, parts) {
     const a = addr(kind, key2);
-    if (!this.#docs.has(a)) this.#docs.set(a, this.#ledger.load(kind, key2, parts));
+    if (this.#budget !== Infinity) this.#usedAt.set(a, Date.now());
+    if (!this.#docs.has(a)) {
+      const d = this.#ledger.load(kind, key2, parts);
+      this.#docs.set(a, d);
+      this.#weigh(a, d, parts);
+    } else if (this.#budget !== Infinity) {
+      const d = this.#docs.get(a);
+      this.#docs.delete(a);
+      this.#docs.set(a, d);
+    }
     return this.#docs.get(a);
   }
   /** The committed value of a definition, brought up to its version (a migration is not stored until a commit). */
@@ -11800,25 +12178,34 @@ var OwnStoreHost = class {
   }
   async #run(change, context) {
     this.#usable();
+    this.#trim();
+    this.#running = true;
+    try {
+      return await this.#runChange(change, context);
+    } finally {
+      this.#running = false;
+    }
+  }
+  async #runChange(change, context) {
     context.abortSignal?.throwIfAborted();
     const drafts = /* @__PURE__ */ new Map();
     const retired = /* @__PURE__ */ new Map();
-    let open2 = true;
+    let open3 = true;
     const tx = {
       doc: (async (def, key2, seed) => {
-        if (!open2) throw new TypeError("this commit is over");
+        if (!open3) throw new TypeError("this commit is over");
         const k = def.family ? key2 : null, a = addr(def.kind, k);
         const known = drafts.get(a);
         if (known) return known.draft.value;
         retired.delete(a);
         const cur = this.#current(def, k);
         const base = cur !== void 0 ? cur : def.family ? def.initial(seed) : def.initial();
-        const draft = draftOf(base, def.parts);
+        const draft = draftOf(base, def.parts, { skipUnchangedRecords: this.skipUnchangedRecords });
         drafts.set(a, { def, key: k, draft });
         return draft.value;
       }),
       retireDoc: (async (def, key2) => {
-        if (!open2) throw new TypeError("this commit is over");
+        if (!open3) throw new TypeError("this commit is over");
         const k = def.family ? key2 : null, a = addr(def.kind, k);
         drafts.get(a)?.draft.discard();
         drafts.delete(a);
@@ -11829,11 +12216,11 @@ var OwnStoreHost = class {
     try {
       result = await inCommit.run(true, () => change(tx));
     } catch (e) {
-      open2 = false;
+      open3 = false;
       for (const d of drafts.values()) d.draft.discard();
       throw e;
     }
-    open2 = false;
+    open3 = false;
     const out = holdsDraft(result) ? detach(result) : result;
     const set = { put: [], retired: [] };
     const changed = [];
@@ -11869,13 +12256,40 @@ var OwnStoreHost = class {
     }
     revoke();
     for (const r of records) deepFreeze(r);
-    for (const d of set.put) this.#docs.set(addr(d.kind, d.key), { kind: d.kind, key: d.key, version: d.version, value: d.value });
-    for (const r of set.retired) this.#docs.set(addr(r.kind, r.key), null);
+    for (const d of set.put) for (const part of d.parts ?? []) if (part.kind === "array") {
+      const arr = part.path.reduce((v, k) => typeof v === "object" && v !== null ? v[k] : void 0, d.value);
+      if (Array.isArray(arr)) markCommitted(arr);
+    }
+    const touched2 = [];
+    for (const d of set.put) {
+      const a = addr(d.kind, d.key), doc = { kind: d.kind, key: d.key, version: d.version, value: d.value };
+      this.#docs.delete(a);
+      this.#docs.set(a, doc);
+      this.#usedAt.set(a, Date.now());
+      this.#weigh(a, doc, d.parts ?? drafts.get(a)?.def.parts);
+      touched2.push(a);
+    }
+    for (const r of set.retired) {
+      const a = addr(r.kind, r.key);
+      this.#docs.set(a, null);
+      this.#weigh(a, null);
+      touched2.push(a);
+    }
+    for (const a of touched2) this.#unsettled.set(a, (this.#unsettled.get(a) ?? 0) + 1);
+    const settled = () => {
+      for (const a of touched2) {
+        const n = this.#unsettled.get(a) - 1;
+        if (n > 0) this.#unsettled.set(a, n);
+        else this.#unsettled.delete(a);
+      }
+    };
     const durable = Promise.resolve(this.#ledger.persist(set, prepared)).then(
       () => {
+        settled();
         for (const [a, value] of changed) for (const w of this.#watches.get(a) ?? []) value === null ? w.finish({ reason: "retired" }) : w.offer(value);
       },
       (e) => {
+        settled();
         this.#failure ??= this.#ledger.failure ?? (e instanceof Error ? e : new Error(String(e)));
         throw e;
       }
@@ -11893,7 +12307,9 @@ var OwnStoreHost = class {
       this.#usable();
     }
     const key2 = def.family ? keyOrContext : null;
-    return this.#current(def, key2);
+    const value = this.#current(def, key2);
+    this.#trim();
+    return value;
   }
   async watchDoc(def, keyOrContext, context) {
     this.#usable();
@@ -11910,7 +12326,12 @@ var OwnStoreHost = class {
     const w = new Watch(value, ctx, (x) => this.#watches.get(a)?.delete(x));
     if (!this.#watches.has(a)) this.#watches.set(a, /* @__PURE__ */ new Set());
     this.#watches.get(a).add(w);
+    this.#trim();
     return w;
+  }
+  /** What the host holds in memory: documents (known absent ones too) and their weight against the budget. */
+  get cached() {
+    return { documents: this.#docs.size, weight: this.#weight };
   }
   /** Whether a write failed: the host takes no more work until its store is reopened. */
   get failed() {
@@ -11927,6 +12348,12 @@ var OwnStoreHost = class {
   stats() {
     return this.#ledger.stats?.();
   }
+  /** The SQLite store gives the free pages of its file back (expired claims, removed entries): it otherwise only grows.
+   *  The first call rewrites the file once (the switch to incremental auto-vacuum); commits wait for it meanwhile, so
+   *  make it at a quiet moment, best before serving. null: a store without a file (memory). */
+  async compact() {
+    return this.#ledger.compact ? await this.#ledger.compact() : null;
+  }
   async close(_context) {
     if (this.#closed) return;
     this.#closed = true;
@@ -11938,11 +12365,6 @@ var OwnStoreHost = class {
     await this.#ledger.close();
   }
 };
-function deepFreeze(v) {
-  if (typeof v !== "object" || v === null || Object.isFrozen(v)) return;
-  Object.freeze(v);
-  for (const x of Object.values(v)) deepFreeze(x);
-}
 function holdsDraft(v, depth = 0) {
   if (typeof v !== "object" || v === null || depth > 64) return false;
   if (isDraft(v)) return true;
@@ -11960,14 +12382,9 @@ function openOwnMemoryHost() {
 // src/store/disk-map.ts
 init_types();
 var GONE = Symbol("gone");
-function deepFreeze2(v) {
-  if (typeof v !== "object" || v === null || Object.isFrozen(v)) return;
-  Object.freeze(v);
-  for (const x of Object.values(v)) deepFreeze2(x);
-}
 var parse = (json) => {
   const v = JSON.parse(json);
-  deepFreeze2(v);
+  deepFreeze(v);
   return v;
 };
 var DiskMap = class _DiskMap {
@@ -12104,6 +12521,9 @@ var DiskMap = class _DiskMap {
 };
 var isDiskMap = (v) => typeof v === "object" && v !== null && v[DISK_MAP] !== void 0;
 
+// src/store/sqlite.ts
+init_types();
+
 // src/store/sqlite-writer.ts
 function writerMain(parentPort, DatabaseSync4, writeFileSync6, prepareOps2, applyOps2) {
   const pause = (() => {
@@ -12123,6 +12543,7 @@ function writerMain(parentPort, DatabaseSync4, writeFileSync6, prepareOps2, appl
       try {
         db = new DatabaseSync4(m.path, { timeout: 1e4 });
         db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = ${m.synchronous};`);
+        if (m.maxPages) db.exec(`PRAGMA max_page_count = ${Math.floor(m.maxPages)};`);
         stmts = prepareOps2(db);
         reply2({ type: "opened" });
       } catch (e) {
@@ -12141,6 +12562,22 @@ function writerMain(parentPort, DatabaseSync4, writeFileSync6, prepareOps2, appl
     }
     if (!db || !stmts) {
       reply2({ type: "failed", batch: m.batch, error: "the store is not open" });
+      return;
+    }
+    if (m.type === "compact") {
+      try {
+        const free = db.prepare("PRAGMA freelist_count").get().freelist_count;
+        const converted = db.prepare("PRAGMA auto_vacuum").get().auto_vacuum !== 2;
+        if (converted) db.exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;");
+        else db.exec("PRAGMA incremental_vacuum;");
+        try {
+          db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+        } catch {
+        }
+        reply2({ type: "compacted", batch: m.batch, freedPages: free, converted });
+      } catch (e) {
+        reply2({ type: "compactFailed", batch: m.batch, error: e.message });
+      }
       return;
     }
     try {
@@ -12164,6 +12601,7 @@ var writerSource = () => `const { parentPort } = process.getBuiltinModule("node:
 
 // src/store/sqlite.ts
 var FORMAT_VERSION = 2;
+var DEFAULT_MEMORY_BUDGET = 4e4;
 var StoreUnavailable = class extends Error {
 };
 var SCHEMA = `
@@ -12178,11 +12616,6 @@ CREATE INDEX IF NOT EXISTS parts_grp ON parts (kind, key, part, grp) WHERE grp I
 CREATE INDEX IF NOT EXISTS parts_open ON parts (kind, key, part) WHERE at IS NULL;
 `;
 var docKey = (key2) => key2 ?? "";
-function deepFreeze3(v) {
-  if (typeof v !== "object" || v === null || Object.isFrozen(v)) return;
-  Object.freeze(v);
-  for (const x of Object.values(v)) deepFreeze3(x);
-}
 var SqliteLedger = class {
   #read;
   #lock;
@@ -12232,6 +12665,13 @@ var SqliteLedger = class {
     worker.on("message", (r) => this.#reply(r));
     worker.on("error", (e) => this.#fail(e instanceof Error ? e : new Error(String(e))));
   }
+  /** The host dropped a document: what is kept for it here goes too (it is read again when it is next needed). */
+  forget(kind, key2) {
+    const id3 = `${kind}\0${docKey(key2)}`;
+    this.#ords.delete(id3);
+    this.#diskMaps.delete(id3);
+    for (const k of [...this.#inline]) if (k.startsWith(`${id3}\0`)) this.#inline.delete(k);
+  }
   load(kind, key2, parts) {
     const row = this.#read.prepare("SELECT version, value FROM documents WHERE kind = ? AND key = ?").get(kind, docKey(key2));
     if (!row) return null;
@@ -12241,7 +12681,7 @@ var SqliteLedger = class {
       const onDisk = parts.filter((p) => p.disk && p.kind === "map");
       for (const r of this.#read.prepare(`SELECT part, id, ord, value FROM parts WHERE kind = ? AND key = ? AND part NOT IN (${onDisk.map(() => "?").join(", ")}) ORDER BY part, ord`).iterate(kind, docKey(key2), ...onDisk.map((p) => p.path.join(".")))) {
         const v = JSON.parse(r.value);
-        deepFreeze3(v);
+        deepFreeze(v);
         if (!rows.has(r.part)) rows.set(r.part, []);
         rows.get(r.part).push({ part: r.part, id: r.id, ord: r.ord, value: v });
         if (!ords.has(r.part)) ords.set(r.part, /* @__PURE__ */ new Map());
@@ -12255,7 +12695,7 @@ var SqliteLedger = class {
       };
       for (const p of parts) if (!rows.has(p.path.join(".")) && inline(p) && (!onDisk.includes(p) || !this.#prep("SELECT 1 FROM parts WHERE kind = ? AND key = ? AND part = ? LIMIT 1").get(kind, docKey(key2), p.path.join(".")))) this.#inline.add(`${kind}\0${docKey(key2)}\0${p.path.join(".")}`);
       for (const p of onDisk) {
-        const parent = p.path.slice(0, -1).reduce((o, k) => o !== null && typeof o === "object" ? o[k] : void 0, value);
+        const parent = partAt(value, p.path.slice(0, -1));
         if (parent === null || typeof parent !== "object" || !(p.path.at(-1) in parent)) continue;
         if (this.#inline.has(`${kind}\0${docKey(key2)}\0${p.path.join(".")}`)) continue;
         this.#index(kind, docKey(key2), p);
@@ -12288,7 +12728,7 @@ var SqliteLedger = class {
       ids: () => this.#prep(`SELECT id ${base}`).all(kind, key2, part).map((r) => r.id),
       due: (t, limit, inGroups, known) => {
         const sql = `SELECT id, value ${base} AND at IS NOT NULL AND at <= ? AND (flag = 0${inGroups.length ? ` OR grp IN (${list2(inGroups.length)})` : ""} OR grp NOT IN (${list2(known.length)})) ORDER BY id LIMIT ?`;
-        return this.#read.prepare(sql).all(kind, key2, part, t, ...inGroups, ...known, limit).map((r) => [r.id, r.value]);
+        return this.#prep(sql).all(kind, key2, part, t, ...inGroups, ...known, limit).map((r) => [r.id, r.value]);
       },
       nextAt: (t) => this.#prep(`SELECT min(at) AS at ${base} AND at IS NOT NULL AND at > ? AND flag = 0`).get(kind, key2, part, t).at ?? void 0,
       group: (g, limit) => this.#prep(`SELECT id ${base} AND grp = ? LIMIT ?`).all(kind, key2, part, g, limit).map((r) => r.id),
@@ -12350,7 +12790,7 @@ var SqliteLedger = class {
       for (const p of d.parts ?? []) {
         if (!p.disk || p.kind !== "map") continue;
         const k = docKey(d.key);
-        const parent = p.path.slice(0, -1).reduce((o, x) => o !== null && typeof o === "object" ? o[x] : void 0, d.value);
+        const parent = partAt(d.value, p.path.slice(0, -1));
         const last = p.path.at(-1), m = parent !== null && typeof parent === "object" ? parent[last] : void 0;
         if (m === null || typeof m !== "object" || isDiskMap(m)) continue;
         const disk = DiskMap.adopt(this.#source(d.kind, k, p.path.join(".")), p.disk, () => this.#handed + 1, this.#strict, m, written);
@@ -12363,8 +12803,8 @@ var SqliteLedger = class {
       this.#diskMaps.delete(`${r.kind}\0${docKey(r.key)}`);
     }
     for (const d of set.put) for (const p of d.parts ?? []) this.#inline.delete(`${d.kind}\0${docKey(d.key)}\0${p.path.join(".")}`);
-    return new Promise((resolve, reject) => {
-      this.#queued.push({ ops, bytes: this.replication ? Buffer.byteLength(JSON.stringify(ops)) : rowBytes(ops), resolve, reject });
+    return new Promise((resolve2, reject) => {
+      this.#queued.push({ ops, bytes: this.replication ? Buffer.byteLength(JSON.stringify(ops)) : rowBytes(ops), resolve: resolve2, reject });
       if (!this.#writing) this.#send();
     });
   }
@@ -12372,9 +12812,16 @@ var SqliteLedger = class {
    *  batch would outgrow its journal entry. One batch at a time (a primary has at most one unresolved candidate). */
   #send() {
     if (!this.#queued.length || this.#failure) return;
+    if (this.#queued[0].compact) {
+      const done2 = this.#queued.splice(0, 1), batch2 = ++this.#batch;
+      this.#writing = { batch: batch2, done: done2, lost: null };
+      this.#worker.ref();
+      this.#worker.postMessage({ type: "compact", batch: batch2 });
+      return;
+    }
     const limit = this.replication?.maxBatchBytes ?? Infinity;
     let n = 0, bytes13 = 0;
-    while (n < this.#queued.length && (n === 0 || bytes13 + this.#queued[n].bytes <= limit)) bytes13 += this.#queued[n++].bytes;
+    while (n < this.#queued.length && !this.#queued[n].compact && (n === 0 || bytes13 + this.#queued[n].bytes <= limit)) bytes13 += this.#queued[n++].bytes;
     const done = this.#queued.splice(0, n), batch = ++this.#batch;
     this.#writing = { batch, done, lost: null };
     this.#worker.ref();
@@ -12405,6 +12852,15 @@ var SqliteLedger = class {
       this.#closing?.();
       return;
     }
+    if ((r.type === "compacted" || r.type === "compactFailed") && this.#writing?.batch === r.batch) {
+      const [d] = this.#writing.done;
+      this.#writing = null;
+      d.compact(r.type === "compacted" ? { freedPages: r.freedPages, converted: r.converted } : { freedPages: 0, converted: false, error: r.error });
+      for (const w of this.#idleWaiters.splice(0)) w();
+      this.#send();
+      if (!this.#writing) this.#worker.unref();
+      return;
+    }
     if (r.type === "written" && this.#writing?.batch === r.batch) {
       this.#stats.writeMs += performance.now() - this.#sentAt;
       const { done, lost } = this.#writing;
@@ -12425,6 +12881,7 @@ var SqliteLedger = class {
       this.#durableCount += done.length;
       for (const maps of this.#diskMaps.values()) for (const m of maps.values()) m.settle(this.#durableCount);
       for (const d of done) d.resolve();
+      for (const w of this.#idleWaiters.splice(0)) w();
       this.#send();
       if (!this.#writing) this.#worker.unref();
       return;
@@ -12443,13 +12900,24 @@ var SqliteLedger = class {
     for (const d of this.#queued) d.reject(later ?? e);
     this.#writing = null;
     this.#queued = [];
+    for (const w of this.#idleWaiters.splice(0)) w();
+  }
+  /** Gives the file's free pages back (sqlite-writer.ts, `compact`), in the writer's order between two batches: the
+   *  commits that come meanwhile wait for it. The first one rewrites the whole file once (switching it to incremental
+   *  auto-vacuum), so do it at a quiet time, best before the store is served. Never throws for a failed compaction:
+   *  the result carries its error and the store goes on. */
+  compact() {
+    if (this.#failure) return Promise.reject(this.#failure);
+    return new Promise((resolve2, reject) => {
+      this.#queued.push({ ops: [], bytes: 0, resolve: () => {
+      }, reject, compact: resolve2 });
+      if (!this.#writing) this.#send();
+    });
   }
   /** Waits for everything queued to be written. */
+  #idleWaiters = [];
   async drain() {
-    while (this.#writing || this.#queued.length) {
-      if (this.#failure) return;
-      await new Promise((r) => setTimeout(r, 1));
-    }
+    while ((this.#writing || this.#queued.length) && !this.#failure) await new Promise((r) => this.#idleWaiters.push(r));
   }
   /** As a killed process would leave it: nothing more is written or flushed, the owner lock is free (tests). */
   abandon() {
@@ -12483,8 +12951,8 @@ var SqliteLedger = class {
       return;
     }
     this.#worker.ref();
-    await new Promise((resolve) => {
-      this.#closing = resolve;
+    await new Promise((resolve2) => {
+      this.#closing = resolve2;
       this.#worker.postMessage({ type: "close" });
     });
     await this.#worker.terminate();
@@ -12548,9 +13016,9 @@ async function openSqliteHost(path, o = {}) {
 async function hostOver(files, o) {
   const { path, read, lock } = files;
   const worker = new Worker(writerSource(), { eval: true });
-  const opened = await new Promise((resolve) => {
-    worker.once("message", resolve);
-    worker.postMessage({ type: "open", path, synchronous: o.synchronous ?? "FULL" });
+  const opened = await new Promise((resolve2) => {
+    worker.once("message", resolve2);
+    worker.postMessage({ type: "open", path, synchronous: o.synchronous ?? "FULL", ...o.maxPages ? { maxPages: o.maxPages } : {} });
   });
   if (opened.type !== "opened") {
     await worker.terminate();
@@ -12562,7 +13030,7 @@ async function hostOver(files, o) {
   if (o.gate) ledger.gate = o.gate;
   if (o.faults) ledger.faults = o.faults;
   if (o.replication) ledger.replication = o.replication;
-  const host = new OwnStoreHost(ledger);
+  const host = new OwnStoreHost(ledger, { memoryBudget: o.memoryBudget ?? DEFAULT_MEMORY_BUDGET, ...o.hotMs !== void 0 ? { hotMs: o.hotMs } : {} });
   worker.unref();
   return host;
 }
@@ -13209,11 +13677,11 @@ async function bounded(p) {
   })]);
   clearTimeout(timer);
 }
-async function openSyncSpaces(configs, open2) {
+async function openSyncSpaces(configs, open3) {
   const opened = [], failed = [];
   for (const c of configs) {
     try {
-      opened.push(await open2(c));
+      opened.push(await open3(c));
     } catch (e) {
       failed.push({ alias: c.alias, error: e instanceof Error ? e.message : String(e) });
     }
@@ -13225,7 +13693,7 @@ function sealedResolver(o) {
   const log = o.log ?? ((m) => console.error(m)), active2 = /* @__PURE__ */ new Map();
   let stopped = false;
   const wakers = /* @__PURE__ */ new Set();
-  const resolve = (sp) => {
+  const resolve2 = (sp) => {
     const key2 = sp.config.spaceId, running = active2.get(key2);
     if (running || stopped) return running ?? Promise.resolve();
     const run = (async () => {
@@ -13264,10 +13732,10 @@ function sealedResolver(o) {
     return run;
   };
   return {
-    resolve,
+    resolve: resolve2,
     /** Resolves whenever a served store gets poisoned, also by the reaper without any call noticing. */
     attach: (spaces) => {
-      for (const sp of spaces) sp.onSealed(() => void resolve(sp));
+      for (const sp of spaces) sp.onSealed(() => void resolve2(sp));
     },
     stop: async () => {
       stopped = true;
@@ -13353,7 +13821,7 @@ async function startGate(service, o) {
   const maxPerPeer = o.maxConnectionsPerPeer ?? 32;
   const rate = o.connectionsPerSecondPerPeer ?? 32;
   const handshakeMs = o.handshakeMs ?? 5e3;
-  const open2 = /* @__PURE__ */ new Map();
+  const open3 = /* @__PURE__ */ new Map();
   const buckets = /* @__PURE__ */ new Map();
   const event = (e) => {
     try {
@@ -13394,14 +13862,14 @@ async function startGate(service, o) {
         event({ event: "refused", ip, peerId: peer.id, reason: "no group of this peer grants a role" });
         return null;
       }
-      if ([...open2.values()].filter((c) => c.peerId === peer.id).length >= maxPerPeer) {
+      if ([...open3.values()].filter((c) => c.peerId === peer.id).length >= maxPerPeer) {
         event({ event: "refused", ip, peerId: peer.id, reason: `already ${maxPerPeer} connections` });
         return null;
       }
       if (socket.destroyed) return null;
       const state = {};
-      open2.set(socket, { peerId: peer.id, ip, roles, state });
-      socket.once("close", () => open2.delete(socket));
+      open3.set(socket, { peerId: peer.id, ip, roles, state });
+      socket.once("close", () => open3.delete(socket));
       event({ event: "accepted", ip, peerId: peer.id });
       return { peerId: peer.id, overlayIp: ip, state, credentials: { roles, groups: peer.groups, name: peer.name } };
     } catch (e) {
@@ -13431,7 +13899,7 @@ async function startGate(service, o) {
         down = true;
       }
       let closed = 0;
-      for (const [socket, c] of [...open2]) {
+      for (const [socket, c] of [...open3]) {
         let reason;
         try {
           const peer = await o.directory.lookup(c.ip);
@@ -13449,7 +13917,7 @@ async function startGate(service, o) {
         if (reason) {
           event({ event: "revoked", ip: c.ip, peerId: c.peerId, reason });
           socket.destroy();
-          open2.delete(socket);
+          open3.delete(socket);
           closed++;
         }
       }
@@ -13464,7 +13932,7 @@ async function startGate(service, o) {
   return {
     ...server,
     revalidate,
-    peers: () => [...open2.values()].map((c) => ({ peerId: c.peerId, ip: c.ip, roles: [...c.roles], proven: c.state.proof !== void 0 })),
+    peers: () => [...open3.values()].map((c) => ({ peerId: c.peerId, ip: c.ip, roles: [...c.roles], proven: c.state.proof !== void 0 })),
     close: async () => {
       clearInterval(timer);
       await server.close();
@@ -13889,11 +14357,11 @@ function localRunMember(host, ctx, spaceId, prepare, now = Date.now) {
     gate,
     recover: (runId, recoveryId) => host.commit(async (tx) => recoverRunGate(await spaceDoc(tx, spaceId, now()), now(), { runId, recoveryId }), ctx),
     async prepare(run, command) {
-      const [ack, open2] = await host.commit(async (tx) => {
+      const [ack, open3] = await host.commit(async (tx) => {
         const s = await spaceDoc(tx, spaceId, now()), ack2 = applyRunGate(s, now(), command);
         return [ack2, runGateView(s, run.runId)?.state === "preparing"];
       }, ctx);
-      if (open2) await prepare(run, spaceId);
+      if (open3) await prepare(run, spaceId);
       return ack;
     }
   };
@@ -14001,13 +14469,13 @@ var WorkerState = defineDoc({
   scope: "session",
   initial: () => ({ authorityId: null, incarnation: null, generation: 0, assignments: [] })
 });
-var abortableSleep = (ms2, signal) => new Promise((resolve) => {
-  if (signal.aborted) return resolve();
+var abortableSleep = (ms2, signal) => new Promise((resolve2) => {
+  if (signal.aborted) return resolve2();
   const t = setTimeout(done, ms2);
   function done() {
     clearTimeout(t);
     signal.removeEventListener("abort", done);
-    resolve();
+    resolve2();
   }
   signal.addEventListener("abort", done, { once: true });
 });
@@ -15130,7 +15598,7 @@ var TlsRecoveryRegister = class {
   call(call) {
     const o = this.o, body = JSON.stringify(call) + "\n";
     if (Buffer.byteLength(body) > 256 * 1024) return Promise.reject(new Error("register request exceeds budget"));
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const socket = tls.connect({ ...o.unixPath ? { path: o.unixPath } : { host: o.host, port: o.port }, servername: o.serverName, ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), rejectUnauthorized: true, minVersion: "TLSv1.3" });
       let input = Buffer.alloc(0), done = false;
       const finish2 = (error, value) => {
@@ -15138,7 +15606,7 @@ var TlsRecoveryRegister = class {
         done = true;
         clearTimeout(timer);
         socket.destroy();
-        error ? reject(error) : resolve(value);
+        error ? reject(error) : resolve2(value);
       };
       const timer = setTimeout(() => finish2(new Error("independent TLS register timed out")), o.timeoutMs ?? 6e3);
       socket.on("secureConnect", () => socket.write(body));
@@ -15185,18 +15653,18 @@ var TlsRecoveryRegister = class {
   }
 };
 async function serveTlsRegister(register, o) {
-  const open2 = /* @__PURE__ */ new Set();
+  const open3 = /* @__PURE__ */ new Set();
   const server = tls.createServer({ ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.3", handshakeTimeout: 4e3 }, (socket) => {
     const certificate = socket.getPeerCertificate(), fingerprint = certificate.raw ? createHash5("sha256").update(certificate.raw).digest("hex") : "", policy = o.peers[fingerprint];
-    if (!socket.authorized || !policy || open2.size >= 32) {
+    if (!socket.authorized || !policy || open3.size >= 32) {
       socket.destroy();
       return;
     }
-    open2.add(socket);
+    open3.add(socket);
     socket.setTimeout(8e3, () => socket.destroy());
     socket.on("error", () => {
     });
-    socket.on("close", () => open2.delete(socket));
+    socket.on("close", () => open3.delete(socket));
     let input = Buffer.alloc(0), started = false;
     socket.on("data", async (data) => {
       if (started) {
@@ -15230,16 +15698,16 @@ async function serveTlsRegister(register, o) {
   server.maxConnections = 64;
   server.on("tlsClientError", () => {
   });
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve2, reject) => {
     server.once("error", reject);
     server.listen(o.port, o.host, () => {
       server.removeListener("error", reject);
-      resolve();
+      resolve2();
     });
   });
   return { address: () => server.address(), close: async () => {
-    for (const s of open2) s.destroy();
-    await new Promise((resolve, reject) => server.close((e) => e ? reject(e) : resolve()));
+    for (const s of open3) s.destroy();
+    await new Promise((resolve2, reject) => server.close((e) => e ? reject(e) : resolve2()));
   } };
 }
 
@@ -15258,7 +15726,7 @@ var SshRecoveryRegister = class {
   call(call) {
     const key2 = call.key;
     if (typeof key2 !== "string" || !key2 || key2.length > 512) return Promise.reject(new Error("invalid register key"));
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const child2 = spawn("ssh", ["-T", "-oBatchMode=yes", "-oStrictHostKeyChecking=yes", this.target, this.operator ? "phi-spaces-register-operator" : "phi-spaces-register-read"], { stdio: ["pipe", "pipe", "ignore"] });
       let output = Buffer.alloc(0), settled = false;
       const finish2 = (error, value) => {
@@ -15266,7 +15734,7 @@ var SshRecoveryRegister = class {
         settled = true;
         clearTimeout(timer);
         child2.kill();
-        error ? reject(error) : resolve(value);
+        error ? reject(error) : resolve2(value);
       };
       const timer = setTimeout(() => finish2(new Error("independent SSH register timed out")), this.timeoutMs);
       child2.on("error", (e) => finish2(e));
@@ -15401,8 +15869,8 @@ var ControlAckService = class {
         const key2 = list(state, (this.o.now ?? Date.now)(), { type: "PeerKey", fields: { peerId: hostKey2.value.peerId, keyId: hostKey2.value.keyId } })[0];
         if (!key2 || key2.fields.state !== "active" || !Array.isArray(key2.fields.roles) || !key2.fields.roles.includes("host") || key2.fields.algorithm !== hostKey2.value.algorithm || key2.fields.publicKey !== hostKey2.value.publicKey || (await this.o.register.get(`host-key:${args.targetHostId}`))?.version !== hostKey2.version) throw new RecoveryBlocked("target host key changed before control receipt commit");
       }
-      const doc = await tx.doc(RecoveryReceipts), existing = doc.receipts[args.recoveryId];
-      if (existing && canonicalJson(existing) !== canonicalJson(args)) throw new RegisterConflict("recovery receipt identity has different arguments");
+      const doc = await tx.doc(RecoveryReceipts), existing2 = doc.receipts[args.recoveryId];
+      if (existing2 && canonicalJson(existing2) !== canonicalJson(args)) throw new RegisterConflict("recovery receipt identity has different arguments");
       if ((await this.o.register.get(`authority:${this.o.controlSpaceId}`))?.version !== authority.version || (await this.o.register.get(`data-transition:${args.space}`))?.version !== transition.version || (await this.o.register.get(`boot:${args.targetHostId}`))?.version !== target.version || (await this.o.register.get(`boot:${transition.value.sourceHostId}`))?.version !== source.version) throw new RecoveryBlocked("recovery authorization changed before control receipt commit");
       doc.receipts[args.recoveryId] ??= plain(args);
       return plain(doc.receipts[args.recoveryId]);
@@ -15421,7 +15889,7 @@ function sshRecoveryTransport(target, timeoutMs = 1e4) {
     for (const c of active2) c.kill();
   }, async request(text2) {
     if (closed || Buffer.byteLength(text2) > 256 * 1024) throw new Error("recovery transport is closed or request exceeds budget");
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const child2 = spawn2("ssh", ["-T", "-oBatchMode=yes", "-oStrictHostKeyChecking=yes", target, "phi-spaces-recovery"], { stdio: ["pipe", "pipe", "ignore"] });
       active2.add(child2);
       let output = Buffer.alloc(0), done = false;
@@ -15431,7 +15899,7 @@ function sshRecoveryTransport(target, timeoutMs = 1e4) {
         clearTimeout(timer);
         active2.delete(child2);
         child2.kill();
-        error ? reject(error) : resolve(reply2);
+        error ? reject(error) : resolve2(reply2);
       };
       const timer = setTimeout(() => finish2(new Error("recovery SSH timed out; resolve the existing request identity")), timeoutMs);
       child2.on("error", (e) => finish2(e));
@@ -15456,7 +15924,7 @@ async function verifySshFence(register, hostId, targets) {
   if (!target || !/^[A-Za-z0-9_.@:-]+$/.test(target) || target.startsWith("-")) throw new RecoveryBlocked("no independently provisioned fencing endpoint for this host");
   const boot = await register.get(`boot:${hostId}`);
   if (!boot || Object.values(boot.value.spaces).some((s) => s.durability === "sync" || s.role === "primary" && s.durability === void 0 || !["local", "primary"].includes(s.role))) throw new RecoveryBlocked("F15 is restricted to single-space hosting without replicas");
-  const status = await new Promise((resolve, reject) => {
+  const status = await new Promise((resolve2, reject) => {
     const process2 = spawn3("ssh", ["-T", "-oBatchMode=yes", "-oStrictHostKeyChecking=yes", target, "phi-spaces-fence-status"], { stdio: ["ignore", "pipe", "ignore"] });
     let output = "", settled = false;
     const finish2 = (error, value) => {
@@ -15464,7 +15932,7 @@ async function verifySshFence(register, hostId, targets) {
       settled = true;
       clearTimeout(timer);
       process2.kill();
-      error ? reject(error) : resolve(value);
+      error ? reject(error) : resolve2(value);
     };
     const timer = setTimeout(() => finish2(new RecoveryBlocked("independent fencing status timed out")), 1e4);
     process2.on("error", (e) => finish2(e));
@@ -15795,8 +16263,8 @@ async function startConfiguredFederation(host, ctx, configFile, factories) {
     }
     let reportChange = () => {
     };
-    const controlChanged = new Promise((resolve) => {
-      reportChange = resolve;
+    const controlChanged = new Promise((resolve2) => {
+      reportChange = resolve2;
     });
     const followTimer = config.recoveryAdmin ? setInterval(() => {
       void followControlHostChange(external, installed, { controlSpaceId: config.controlSpaceId, configured: { hostId: config.controlHostId, authorityId }, recoveryAdmin: config.recoveryAdmin }).then((c) => {
@@ -15909,6 +16377,66 @@ function piServerTransport(invoke) {
     }
   };
 }
+
+// src/space-client.ts
+init_client();
+function parseTarget(spec) {
+  if (spec.startsWith("tcp:")) {
+    const m = /^tcp:([^:]+):(\d+)$/.exec(spec);
+    if (!m || !Number.isSafeInteger(Number(m[2]))) throw new Error(`a tcp address is tcp:host:port, not ${spec}`);
+    return { host: m[1], port: Number(m[2]) };
+  }
+  const path = spec.replace(/^unix:/, "");
+  if (!path) throw new Error(`an address is unix:/path or tcp:host:port, not ${spec}`);
+  return { path };
+}
+function connectSpace(spec, o = {}) {
+  const { callTimeoutMs = 3e4, connectTimeoutMs = 5e3, attempts = 3, ...rest } = o;
+  const transport = socketTransport(parseTarget(spec), { connectTimeoutMs, requestTimeoutMs: callTimeoutMs + 5e3 });
+  return { space: new RemoteSpace(transport, { ...rest, callTimeoutMs, attempts }), transport, close: () => transport.close() };
+}
+var StillHeld = class extends Error {
+};
+function readExisting(space, tmpl2, waitMs, o = {}) {
+  return existing(space, tmpl2, waitMs, o, false);
+}
+function takeExisting(space, tmpl2, waitMs, o = {}) {
+  return existing(space, tmpl2, waitMs, o, true);
+}
+async function existing(space, tmpl2, waitMs, o, take) {
+  const p = (space.probe ? await space.probe(tmpl2, waitMs, { txn: o.txn ?? null, take }).catch((e) => {
+    if (e instanceof UnsupportedOperation) return null;
+    throw e;
+  }) : null) ?? { entry: await (take ? space.takeIfExists(tmpl2, waitMs, o) : space.readIfExists(tmpl2, waitMs, o)), locked: false };
+  if (!p.entry && p.locked) throw new StillHeld(`${String(tmpl2?.type ?? "an entry")} stayed held for ${waitMs} ms`);
+  return p.entry;
+}
+async function peek(space, tmpl2, o = {}) {
+  return (await space.readAll(tmpl2, { limit: 1, ...o.txn ? { txn: o.txn } : {} }))[0] ?? null;
+}
+async function takeAll(space, tmpl2, o = {}) {
+  let n = 0;
+  while (await space.take(tmpl2, NO_WAIT, o.txn ? { txn: o.txn } : {})) n++;
+  return n;
+}
+async function awaitWork(space, tmpl2, waitMs, halt) {
+  if (halt?.aborted) return false;
+  const read = space.read(tmpl2, waitMs).then((e) => e !== null);
+  if (!halt) return read;
+  read.catch(() => {
+  });
+  return Promise.race([read, new Promise((r) => halt.addEventListener("abort", () => r(false), { once: true }))]);
+}
+function keepAlive(space, lease, leaseMs) {
+  const timer = setInterval(() => void space.renew(lease, leaseMs).catch(() => {
+  }), Math.max(1e3, Math.floor(leaseMs / 3)));
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+var cutText = (text2, max) => {
+  const cut = text2.slice(0, max), last = cut.charCodeAt(cut.length - 1);
+  return last >= 55296 && last <= 56319 && text2.length > max ? cut.slice(0, -1) : cut;
+};
 
 // src/index.ts
 init_service();
@@ -16300,7 +16828,7 @@ function fileTokenProvider(path, o = {}) {
 var BUDGET = 64 * 1024;
 var validProof = (p) => !!p && typeof p === "object" && typeof p.hostId === "string" && typeof p.kind === "string" && typeof p.observedAt === "number" && typeof p.restartLocked === "boolean";
 async function serveFencing(adapter, o) {
-  const open2 = /* @__PURE__ */ new Set();
+  const open3 = /* @__PURE__ */ new Set();
   let chain = Promise.resolve();
   const serial = (fn) => {
     const p = chain.then(fn, fn);
@@ -16310,15 +16838,15 @@ async function serveFencing(adapter, o) {
   };
   const server = tls2.createServer({ ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.3", handshakeTimeout: 4e3 }, (socket) => {
     const c = socket.getPeerCertificate(), fp = c.raw ? createHash6("sha256").update(c.raw).digest("hex") : "";
-    if (!socket.authorized || !o.peers[fp]?.operator || open2.size >= 8) {
+    if (!socket.authorized || !o.peers[fp]?.operator || open3.size >= 8) {
       socket.destroy();
       return;
     }
-    open2.add(socket);
+    open3.add(socket);
     socket.setTimeout(3e5, () => socket.destroy());
     socket.on("error", () => {
     });
-    socket.on("close", () => open2.delete(socket));
+    socket.on("close", () => open3.delete(socket));
     let input = Buffer.alloc(0), started = false;
     socket.on("data", async (data) => {
       if (started) {
@@ -16361,15 +16889,15 @@ async function serveFencing(adapter, o) {
       if (!allow.has(String(s.remoteAddress).replace(/^::ffff:/, ""))) s.destroy();
     });
   }
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve2, reject) => {
     server.once("error", reject);
     server.listen(o.port, o.host, () => {
       server.removeListener("error", reject);
-      resolve();
+      resolve2();
     });
   });
   return { address: () => server.address(), close: async () => {
-    for (const s of open2) s.destroy();
+    for (const s of open3) s.destroy();
     await new Promise((res, rej) => server.close((e) => e ? rej(e) : res()));
   } };
 }
@@ -16382,7 +16910,7 @@ var TlsFencing = class {
   }
   call(q) {
     const o = this.o, body = JSON.stringify(q) + "\n";
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const socket = tls2.connect({ host: o.host, port: o.port, servername: o.serverName, ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), rejectUnauthorized: true, minVersion: "TLSv1.3" });
       let input = Buffer.alloc(0), done = false;
       const finish2 = (e, v) => {
@@ -16390,7 +16918,7 @@ var TlsFencing = class {
         done = true;
         clearTimeout(timer);
         socket.destroy();
-        e ? reject(e) : resolve(v);
+        e ? reject(e) : resolve2(v);
       };
       const timer = setTimeout(() => finish2(new Error("fencing service timed out")), o.timeoutMs ?? 24e4);
       socket.on("secureConnect", () => socket.write(body));
@@ -16431,8 +16959,8 @@ import { existsSync as existsSync3, mkdirSync as mkdirSync8, readdirSync, unlink
 import { join as join3 } from "node:path";
 var ContainerFencingError = class extends Error {
 };
-var execRunner = (command, args) => new Promise((resolve) => {
-  execFile(command, args, { timeout: 12e4, maxBuffer: 1 << 20 }, (e, stdout, stderr) => resolve({ code: e ? typeof e.code === "number" ? e.code : 1 : 0, stdout: String(stdout), stderr: String(stderr) }));
+var execRunner = (command, args) => new Promise((resolve2) => {
+  execFile(command, args, { timeout: 12e4, maxBuffer: 1 << 20 }, (e, stdout, stderr) => resolve2({ code: e ? typeof e.code === "number" ? e.code : 1 : 0, stdout: String(stdout), stderr: String(stderr) }));
 });
 var NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 var UNIT = /^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,127}\.service$/;
@@ -16571,6 +17099,7 @@ var MemberTransitionInstaller = class {
           s.waiters = [];
           s.regs = [];
           s.outbox = [];
+          delete s.outboxBytes;
           s.jobs = [];
           s.releaseQueue = [];
           s.mailboxes = { boxes: {} };
@@ -17620,6 +18149,7 @@ async function deliverEvents(harness, ctx, o = {}) {
   await harness.commit(async (tx) => {
     const s = await spaceDoc(tx, o.space, now());
     s.outbox = s.outbox.filter((x) => !done.has(key2(x)));
+    delete s.outboxBytes;
     for (const x of s.outbox) if (failed.has(key2(x))) {
       x.tries = (x.tries ?? 0) + 1;
       x.retryAt = now() + retryMs * x.tries;
@@ -17634,6 +18164,7 @@ async function deliverEvents(harness, ctx, o = {}) {
       if (giveUp) gaveUp.push(`gave up delivering ${x.kind} event ${x.eventId}:${x.seq} after ${MAX_TRIES} attempts`);
     }
     s.outbox = s.outbox.filter((x) => !lost.has(key2(x)));
+    delete s.outboxBytes;
     for (const t of release) releaseTxn(s, now(), t);
     undeliverable = lost.size;
   }, ctx);
@@ -17812,9 +18343,27 @@ async function startDelivery(harness, ctx, o = {}) {
 
 // agent/src/agent.ts
 import { Type } from "@earendil-works/pi-ai";
+import { BACKGROUND_CONTEXT as BACKGROUND_CONTEXT2 } from "@earendil-works/chord/context";
 import { defineDocFamily as defineDocFamily2, defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 var MAX_WAIT_MS = 6e4;
 var GENERATION_MARGIN_MS = 10 * 6e4;
+function agentContext(context) {
+  if ("telemetry" in context) return context;
+  return {
+    abortSignal: context.abortSignal,
+    telemetry: BACKGROUND_CONTEXT2.telemetry,
+    value: (key2) => context.value(key2),
+    toString: () => context.toString()
+  };
+}
+function withAgentEventSink(host, harness) {
+  return withEventSink(host, {
+    async conversation(id3, context) {
+      const conversation = await harness.conversation(id3, agentContext(context));
+      return conversation ? { submit: (input, context2) => conversation.submit(input, agentContext(context2)) } : void 0;
+    }
+  });
+}
 var conversationPrincipal = (id3) => ({ peerId: `conversation-${id3}` });
 function localSpaces(host, o = {}) {
   const now = o.now ?? Date.now, meter2 = o.meter ?? meter, options = o.space ? { space: o.space } : {};
@@ -17830,9 +18379,10 @@ var Generation = defineDocFamily2({
   version: 1,
   scope: "session",
   family: true,
-  initial: () => ({ generation: null, admitUntil: 0 })
+  initial: () => ({ generation: null, admitUntil: 0 }),
+  checkpointWhen: () => true
 });
-var text = (v) => ({ content: [{ type: "text", text: JSON.stringify(v ?? null) }] });
+var text = (v) => ({ output: [{ type: "text", text: JSON.stringify(v ?? null) }] });
 var Fields = Type.Optional(Type.Record(Type.String(), Type.Any()));
 var Duration = (description) => Type.Optional(Type.Union([Type.Number({ minimum: 0 }), Type.Literal("forever")], { description }));
 var ms = (v, dflt) => v === "forever" ? core_exports.FOREVER : v ?? dflt;
@@ -17965,6 +18515,56 @@ function createSpaces(spaces) {
     ]
   });
 }
+
+// agent/src/storage.ts
+import { mkdir, open as open2 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname7, resolve } from "node:path";
+import { FileError } from "@earendil-works/pi-durable/env";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { JsonlStorage } from "@earendil-works/pi-durable/storage/jsonl";
+import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
+async function syncDirectory(path) {
+  const file = await open2(path, "r");
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+}
+async function ensureDurableDirectory(path) {
+  const absolute = resolve(path);
+  const first = await mkdir(absolute, { recursive: true });
+  const boundary = dirname7(first ?? absolute);
+  for (let current = absolute; ; current = dirname7(current)) {
+    await syncDirectory(current);
+    if (current === boundary || current === dirname7(current)) break;
+  }
+}
+async function openDurableSqliteDatabase(path) {
+  await ensureDurableDirectory(dirname7(resolve(path)));
+  const database = await openNodeSqliteDatabase(path);
+  try {
+    await database.exec("PRAGMA synchronous = FULL");
+    const setting = await database.get("PRAGMA synchronous");
+    if (setting?.synchronous !== 2) throw new Error("Agent SQLite requires synchronous=FULL");
+    return database;
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
+}
+async function openDurableSqliteStorage(path) {
+  const database = await openDurableSqliteDatabase(path);
+  try {
+    const storage = await SqliteStorage.open(database);
+    await syncDirectory(dirname7(resolve(path)));
+    return storage;
+  } catch (error) {
+    await database.close();
+    throw error;
+  }
+}
 export {
   ANY,
   AUTH_PROTOCOL,
@@ -18088,6 +18688,7 @@ export {
   RequestExpired,
   ResourceExhausted,
   ResultExpired,
+  RevisionAhead,
   RootErasures,
   RootHistoryErasure,
   RotationService,
@@ -18104,6 +18705,7 @@ export {
   RunGateService,
   RunJournal,
   SimulatorFencing,
+  SnapshotExpired,
   SocketRecoveryRegister,
   Space,
   SpaceInUse,
@@ -18115,12 +18717,14 @@ export {
   SqliteRecoveryRegister,
   SshRecoveryRegister,
   StaticIdentity,
+  StillHeld,
   StoreUnavailable,
   Supervisor,
   TlsFencing,
   TlsRecoveryRegister,
   TransactionError,
   UNPAIRED_ROLE,
+  UniqueConflict,
   UnknownLeaseError,
   UnknownSpaceError,
   UnsupportedOperation,
@@ -18131,6 +18735,7 @@ export {
   abortableSleep,
   adoptReplicaConfigNotice,
   advanceHybridClock,
+  agentContext,
   alignControlReplicaIn,
   appliedWorkers,
   applyConfigTransition,
@@ -18140,6 +18745,7 @@ export {
   assertSyncStandby,
   auditLog,
   awaitWithContext,
+  awaitWork,
   beginRestore,
   bootstrapEnroll,
   bootstrapPrimarySync,
@@ -18151,17 +18757,18 @@ export {
   collectAlerts,
   compareHybridClock,
   completeRestore,
+  connectSpace,
   controlAlignmentBlocker,
   controlRecoveryHandler,
   conversationPrincipal,
   core_exports as core,
   createConfiguredRoot,
-  createContextKey,
   createEnroll,
   createFederationController,
   createRotationChallenge,
   createSpace,
   createSpaces,
+  cutText,
   dataRecoveryHandler,
   degradeToSingle,
   delegationForCall,
@@ -18184,6 +18791,7 @@ export {
   installAdmittedPermit,
   installAuthorityTransition,
   installBootGuard,
+  keepAlive,
   keyFingerprint,
   lastConfigTransition,
   latestReplicaConfigNotice,
@@ -18197,13 +18805,16 @@ export {
   meter,
   newEnrollToken,
   normalizeFederatedEntry,
+  openDurableSqliteStorage,
   openOwnMemoryHost,
   openSqliteHost,
   openSyncSpace,
   openSyncSpaces,
   operationPartition,
   parentJournalKey,
+  parseTarget,
   partitionRouterId,
+  peek,
   piServerTransport,
   primarySyncStorage,
   principalId,
@@ -18212,6 +18823,7 @@ export {
   promote,
   promotionEvidence,
   provisionFileSigner,
+  readExisting,
   readmitSpace,
   recordControlHostChange,
   recoverPrimarySync,
@@ -18268,6 +18880,8 @@ export {
   startRecoveryOnly,
   startService,
   startWorkerSupervisor,
+  takeAll,
+  takeExisting,
   unconfiguredFencing,
   validateDeployment,
   validateFederationPolicy,
@@ -18285,9 +18899,9 @@ export {
   watchLive,
   webhookPublisher,
   withAbortSignal,
-  withCancel,
+  withAgentEventSink,
   withContextValue,
-  withEventSink,
+  withAgentEventSink as withEventSink,
   withSpaceService,
   workerCommands,
   writeMember

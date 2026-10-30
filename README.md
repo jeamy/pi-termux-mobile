@@ -8,8 +8,8 @@
 
 Minimal Android app that embeds Termux-built binaries (Node.js 26.4.0, bash,
 coreutils, git, ripgrep, fd, openssh, npm, util-linux `script`, …) plus a
-**pi-durable** harness (`@earendil-works/pi-durable` 1.0.2 + pi-ai/chord, with
-pi-coding-agent 1.0.2 bundled for the CLI + TUI) behind a tiny
+**pi-durable** harness (`@earendil-works/pi-durable` 1.4.0 + pi-ai/chord 1.4.0, with
+pi-coding-agent 1.4.0 bundled for the CLI + TUI) behind a tiny
 HTTP/SSE/WebSocket bridge (`runtime/server.mjs`). UI is a local WebView on
 `http://127.0.0.1:<port>` (ephemeral port → `files/home/.pi-mobile/port`,
 token → `…/token`).
@@ -19,6 +19,23 @@ The durable harness gives: SQLite-backed conversations
 `harness.resume()` continues interrupted runs), a `subagent` tool (child
 conversations owned by the calling task), model selection per conversation,
 and per-conversation execution environments — including remote hosts.
+
+The runtime pins these Pi packages to 1.4.0. `pi-server` and `pi-client` have no
+1.4.0 release: they use their latest published 1.1.0, with their transport-side
+Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.4.0;
+the RPC boundary explicitly adapts older contexts to its telemetry-aware context.
+Do not deduplicate the transport onto Chord 1.4.0: its legacy RPC exports are absent there.
+
+Before starting this runtime against existing data, back up the agent SQLite
+databases consistently. pi-durable 1.4.0 upgrades them to schema 2, which cannot
+be opened by 1.3.0 or older; rolling back needs the preceding database backup.
+The separate phi-spaces database is not this agent schema. Installing packages
+or refreshing the bundle does not itself migrate existing runtime data.
+
+Agent databases use WAL with `synchronous=FULL`, enforced before the durable schema is opened,
+through the shared phi-spaces agent storage adapter. File and directory flush failures are not
+silently downgraded. This strengthens the write policy; it is not a completed physical power-cut
+certification, nor an exactly-once promise for model-provider calls.
 
 ## Space RPC through pi-serverd
 

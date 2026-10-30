@@ -15,7 +15,7 @@ import {
   Harness, watchEvents,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { openDurableSqliteStorage } from './phi-spaces.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -196,7 +196,7 @@ export const Subagent = defineExtension({
         }, context);
         await api.details({ conversationId: childId }, context); // lets the UI show the child
         const conv = await api.conversation(childId, context);
-        if (!conv) return { content: [{ type: 'text', text: 'subagent conversation unavailable' }] };
+        if (!conv) return { output: [{ type: 'text', text: 'subagent conversation unavailable' }] };
         const settled = await (await conv.submit(
           { type: 'input', content: args.task, requestId: `subagent:${api.taskId}` }, context)).wait(context);
         let text = settled.status;
@@ -208,7 +208,7 @@ export const Subagent = defineExtension({
             ? parts.filter((c) => c?.type === 'text').map((c) => c.text).join('\n')
             : String(parts);
         }
-        return { content: [{ type: 'text', text: text || settled.status }] };
+        return { output: [{ type: 'text', text: text || settled.status }] };
       },
     }),
   ],
@@ -230,17 +230,18 @@ export const SessionRegistry = defineDoc({
   version: 1,
   scope: 'session',
   initial: () => ({ sessions: {}, activeId: null }),
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 499,
 });
 
 // phi-spaces shared space; refreshed automatically by phi-spaces bundle and the Android pre-build task.
 // The space has its own store (space.sqlite): it outlives the agent sessions' harness; the agents' space tools act on it.
-export { createSpaces, localSpaces, openSqliteHost, startService as startSpaceService, withEventSink } from './phi-spaces.mjs';
+export { agentContext, createSpaces, localSpaces, openSqliteHost, startService as startSpaceService, withEventSink } from './phi-spaces.mjs';
 
 export async function openHarness({ dbPath, models, env, extensions = [] }, ctx) {
   const registry = createRegistry();
   registry.install(CodingTools);
   for (const ext of extensions) registry.install(ext);
-  const storage = await openNodeSqliteStorage(dbPath);
+  const storage = await openDurableSqliteStorage(dbPath);
   const harness = await Harness.open(storage, { models, registry, env, settings: HARNESS_SETTINGS }, ctx);
   return harness;
 }

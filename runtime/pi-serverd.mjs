@@ -19,7 +19,7 @@ import { createUnixServer } from '@earendil-works/pi-server/unix';
 import { SessionNotFoundError } from '@earendil-works/pi-server';
 import { SpaceService, StaticIdentity, withSpaceService, startConfiguredFederation } from './phi-spaces.mjs';
 import {
-  acquireOwnerLock, createCredentialStore, createEventHub, createModelCatalog,
+  acquireOwnerLock, agentContext, createCredentialStore, createEventHub, createModelCatalog,
   ensureModel, isBusy, openHarness, pickModel, readJson, requestIdOf, sessionStore, Subagent,
   whenBusyOf, writeFileAtomic, createSpaces, localSpaces, openSqliteHost, startSpaceService, withEventSink,
 } from './common.mjs';
@@ -120,7 +120,7 @@ function routedSession(sessionId) {
       return {
         async invokeService(call, publish, context) {
           if (call.serviceId !== 'chat') throw new Error(`unknown service: ${call.serviceId}`);
-          const c = context ?? ctx;
+          const c = agentContext(context ?? ctx);
           const arg = call.args[0] ?? {};
           const invoke = async () => {
             // Existing attachments must lose access as soon as their registry
@@ -192,7 +192,7 @@ const host = {
       return {
         async invokeService(call, publish, context) {
           if (call.serviceId !== 'sessions') throw new Error(`unknown service: ${call.serviceId}`);
-          const c = context ?? ctx;
+          const c = agentContext(context ?? ctx);
           switch (call.member) {
             case 'list':
               return { sessions: (await sessions.list()).map((s) => ({ cwd: WORKDIR, ...s })) };
