@@ -20,11 +20,14 @@ The durable harness gives: SQLite-backed conversations
 conversations owned by the calling task), model selection per conversation,
 and per-conversation execution environments — including remote hosts.
 
-The runtime pins these Pi packages to 1.4.0. `pi-server` and `pi-client` have no
-1.4.0 release: they use their latest published 1.1.0, with their transport-side
-Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.4.0;
+The runtime pins the agent-side Pi packages to 1.5.0. `pi-server` and `pi-client` have no
+1.5.0 release: they use their latest published 1.1.0, with their transport-side
+Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.5.0;
 the RPC boundary explicitly adapts older contexts to its telemetry-aware context.
-Do not deduplicate the transport onto Chord 1.4.0: its legacy RPC exports are absent there.
+Do not deduplicate the transport onto Chord 1.5.0: its legacy RPC exports are absent there.
+Tool schemas use `pi-schema`. Conversation watches replace the removed `watchEvents`
+and `viewState` APIs; the bridge retains paged transcript history and forwards
+self-contained snapshots to the existing local and remote renderers.
 
 Before starting this runtime against existing data, back up the agent SQLite
 databases consistently. pi-durable 1.4.0 upgrades them to schema 2, which cannot

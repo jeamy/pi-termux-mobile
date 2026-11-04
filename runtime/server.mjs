@@ -14,7 +14,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { watchEvents } from '@earendil-works/pi-durable';
+import { watchEvents } from './common.mjs';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { RemoteExecutionEnv } from './remote-env.mjs';
 import { parseSshTarget, sshHostFingerprint } from './remote-client.mjs';
@@ -197,8 +197,8 @@ async function activate(conversation, { persist = true } = {}) {
 }
 
 async function currentModel(conv) {
-  const view = await conv.viewState(ctx);
-  try { return agentOf(view).model; } finally { view.dispose?.(); }
+  const view = await conv.watch(ctx);
+  try { return agentOf(view).model; } finally { await view.stop(); }
 }
 
 async function giveActiveSessionAModel() {
@@ -318,7 +318,7 @@ function sshKeyInfo() {
 // --- API -----------------------------------------------------------------------------
 
 async function activeState() {
-  const view = active ? await active.viewState(ctx) : null;
+  const view = active ? await active.watch(ctx) : null;
   try {
     const meta = active ? await sessions.get(active.id) : null;
     return {
@@ -331,7 +331,7 @@ async function activeState() {
       sessionName: meta?.name ?? 'Main',
       remotes: Object.keys(REMOTES),
     };
-  } finally { view?.dispose?.(); }
+  } finally { await view?.stop(); }
 }
 
 async function handleApi(req, res, url, p) {
@@ -448,8 +448,8 @@ async function handleApi(req, res, url, p) {
   if (p === '/api/model' && req.method === 'POST') {
     if (!body.provider || !body.modelId) return json(res, 400, { error: 'provider+modelId required' });
     await active.configure({ model: { provider: str(body.provider), modelId: str(body.modelId) } }, ctx);
-    const view = await active.viewState(ctx);
-    try { return json(res, 200, { ok: true, applied: agentOf(view).model }); } finally { view.dispose?.(); }
+    const view = await active.watch(ctx);
+    try { return json(res, 200, { ok: true, applied: agentOf(view).model }); } finally { await view.stop(); }
   }
 
   // --- ssh clients

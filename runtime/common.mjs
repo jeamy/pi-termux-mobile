@@ -7,12 +7,12 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { Type } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import {
   AssistantEntry, configure, createRegistry, defineDoc, defineExtension, defineTool,
-  Harness, watchEvents,
+  ConversationTranscript, Harness,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { openDurableSqliteStorage } from './phi-spaces.mjs';
@@ -167,13 +167,13 @@ export const isBusy = (view) => Boolean(view?.value?.docs?.['pi.live']?.run);
 
 /** Give a conversation without a model the current default (never overrides a choice). */
 export async function ensureModel(conv, models, ctx) {
-  const view = await conv.viewState(ctx);
+  const view = await conv.watch(ctx);
   try {
     if (agentOf(view).model) return agentOf(view).model;
     const m = await pickModel(models);
     if (m) await conv.configure({ model: m }, ctx);
     return m;
-  } finally { view.dispose?.(); }
+  } finally { await view.stop(); }
 }
 
 // --- subagent extension (pi-durable README pattern) ------------------------------
@@ -184,7 +184,7 @@ export const Subagent = defineExtension({
     defineTool({
       name: 'subagent',
       description: 'Delegate a self-contained task to a subagent conversation and return its final answer.',
-      parameters: Type.Object({ task: Type.String() }),
+      parameters: obj({ task: str() }),
       replay: 'safe', // a rerun after a crash finds the same child and submission
       execute: async (args, api, context) => {
         const childId = await api.commit(async (tx) => {
@@ -302,6 +302,34 @@ export function sessionStore(harness, ctx) {
 // read the same events and a lost response is simply fetched again. A client that
 // fell behind the ring gets `reset: true` and reloads the transcript.
 
+export async function watchEvents(harness, conversationId, ctx) {
+  const conversation = await harness.conversation(conversationId, ctx);
+  if (!conversation) throw new Error('conversation not found');
+  const watch = await conversation.watch(ctx);
+  const transcript = new ConversationTranscript((query, limit, context) => conversation.entries(query, limit, undefined, context));
+  const snapshot = async (value) => {
+    let view = transcript.merge(value);
+    for (;;) {
+      const gap = view.items.find(item => item.kind === 'gap' || item.kind === 'earlier');
+      if (!gap) break;
+      view = gap.kind === 'gap' ? await transcript.fillGap(gap, ctx) : await transcript.loadEarlier(ctx);
+    }
+    const docs = view.docs ?? {}, live = docs['pi.live'] ?? {};
+    return {
+      type: 'snapshot', conversation: view.conversation,
+      entries: view.items.filter(item => item.kind === 'entry').map(item => item.entry),
+      ...live, agent: docs['pi.agent'], usage: docs['pi.usage'], inbox: docs['pi.inbox']?.items ?? [],
+    };
+  };
+  return {
+    snapshot: await snapshot(watch.value),
+    start: listener => watch.start(async call => {
+      if (call.kind === 'value') await listener([await snapshot(call.value)]);
+    }),
+    stop: () => watch.stop(),
+  };
+}
+
 export function createEventHub(harness, ctx, { ringSize = 2000, idleMs = 10 * 60_000 } = {}) {
   const hubs = new Map(); // conversationId -> hub
 
@@ -316,6 +344,7 @@ export function createEventHub(harness, ctx, { ringSize = 2000, idleMs = 10 * 60
     } catch (e) { hubs.delete(key); throw e; }
     hub.stream.start(async (events) => {
       for (const ev of events) {
+        if (ev.type === 'snapshot') hub.events.length = 0;
         hub.events.push({ seq: hub.nextSeq++, ev });
         if (hub.events.length > ringSize) { hub.events.shift(); hub.firstSeq = hub.events[0].seq; }
       }
@@ -343,7 +372,7 @@ export function createEventHub(harness, ctx, { ringSize = 2000, idleMs = 10 * 60
       });
     }
     hub.lastUse = Date.now();
-    const reset = since + 1 < hub.firstSeq;
+    const reset = since + 1 < hub.firstSeq && hub.events[0]?.ev.type !== 'snapshot';
     const events = reset ? [] : hub.events.filter((e) => e.seq > since);
     return {
       epoch: hub.epoch,

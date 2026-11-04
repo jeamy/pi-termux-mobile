@@ -148,8 +148,8 @@ function routedSession(sessionId) {
                 return { ok: true, taskId };
               }
               case 'state': {
-                const view = await conv.viewState(c);
-                try { return { ...view.value, busy: isBusy(view) }; } finally { view.dispose?.(); }
+                const view = await conv.watch(c);
+                try { return { ...view.value, busy: isBusy(view) }; } finally { await view.stop(); }
               }
               case 'configure': {
                 if (arg.model?.provider && arg.model?.modelId) {
