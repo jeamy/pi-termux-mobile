@@ -4,12 +4,12 @@
 > development. Remote sessions, the embedded Termux runtime, and Android
 > background-process handling may still change or fail on individual devices.
 >
-> **Version 0.0.6** — still quick & dirty, see the [changelog](#changelog).
+> **Version 0.0.7** — still quick & dirty, see the [changelog](#changelog).
 
 Minimal Android app that embeds Termux-built binaries (Node.js 26.4.0, bash,
 coreutils, git, ripgrep, fd, openssh, npm, util-linux `script`, …) plus a
-**pi-durable** harness (`@earendil-works/pi-durable` 1.4.0 + pi-ai/chord 1.4.0, with
-pi-coding-agent 1.4.0 bundled for the CLI + TUI) behind a tiny
+**pi-durable** harness (`@earendil-works/pi-durable` 1.5.0 + pi-ai/chord 1.5.0, with
+pi-coding-agent 1.5.0 bundled for the CLI + TUI) behind a tiny
 HTTP/SSE/WebSocket bridge (`runtime/server.mjs`). UI is a local WebView on
 `http://127.0.0.1:<port>` (ephemeral port → `files/home/.pi-mobile/port`,
 token → `…/token`).
@@ -30,8 +30,9 @@ and `viewState` APIs; the bridge retains paged transcript history and forwards
 self-contained snapshots to the existing local and remote renderers.
 
 Before starting this runtime against existing data, back up the agent SQLite
-databases consistently. pi-durable 1.4.0 upgrades them to schema 2, which cannot
-be opened by 1.3.0 or older; rolling back needs the preceding database backup.
+databases consistently. pi-durable 1.4.0 upgraded them to schema 2, which cannot
+be opened by 1.3.0 or older; 1.5.0 keeps schema 2. Rolling back past 1.4.0
+needs the preceding database backup.
 The separate phi-spaces database is not this agent schema. Installing packages
 or refreshing the bundle does not itself migrate existing runtime data.
 
@@ -474,6 +475,31 @@ Caveats on device:
 See ANALYSE.md for the full evaluation and upstream facts.
 
 ## Changelog
+
+### 0.0.7 — 2026-11-04
+
+Earendil Pi runtime upgrades to 1.4.0 and 1.5.0, with stricter storage durability.
+
+**Pi 1.5.0**
+
+- Agent-side packages pinned to 1.5.0 (`pi-durable`, `pi-ai`, `chord`,
+  `pi-coding-agent`, `pi-schema`). `pi-client` and `pi-server` have no 1.5.0
+  release and stay at their latest published 1.1.0, with transport-side Chord
+  isolated to 1.1.0 through npm overrides — do not deduplicate it onto Chord
+  1.5.0, whose legacy RPC exports are absent.
+- Tool schemas now come from `pi-schema` instead of `pi-ai`'s `Type`.
+- The removed `watchEvents`/`viewState` APIs are replaced by Conversation
+  watches; `common.mjs` adapts them to self-contained snapshots for local SSE
+  and remote polling, and `ConversationTranscript` retains and pages history
+  across watch windows.
+- Resume after a crash counts an interrupted model call as a failed attempt;
+  the retry budget still applies.
+- **Pi 1.4.0** (same release line): agent databases are upgraded to schema 2,
+  which cannot be opened by 1.3.0 or older — back up consistently first.
+  WAL with `synchronous=FULL` is enforced before the durable schema opens, and
+  file/directory flush failures are not silently downgraded.
+- The phi-spaces bundle (`runtime/phi-spaces.mjs`) is synchronized; the space
+  tools' prompt no longer names a limit of 1000 entries per agent.
 
 ### 0.0.6 — 2026-10-26
 
