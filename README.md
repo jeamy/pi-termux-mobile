@@ -492,6 +492,11 @@ See ANALYSE.md for the full evaluation and upstream facts.
   (`PI_SERVERD_REMOTE_SPACE`, `runtime/remote-calls.mjs`); Spaces → "Remote-Sitzungen über
   Space" names the agent host, which then appears on the Remote page as "(über Space)" and is
   reached with the device key and a coordinator grant, no SSH. The SSH path stays.
+- Device demo of that path over WLAN: `scripts/remote-demo/run.sh --device <adb serial>`
+  (LAN coordinator, pi-serverd with the scripted model, the phone driven over adb; flow in
+  [docs/remote-demo.md](docs/remote-demo.md), German).
+- Fix: the APK did not package `runtime/remote-calls.mjs`, so the app's node exited on start;
+  `scripts/prepare-runtime.py` now refuses a packaged module that imports an unpackaged sibling.
 - [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
   the three steps (prepare, pair, connect a Space), every field and button, the status
   card, error messages and what is kept on the device.

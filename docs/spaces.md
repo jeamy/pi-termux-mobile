@@ -81,6 +81,8 @@ Wählt man ihn und tippt **connect**, verbindet sich die Seite über den Space s
 Prompts, Abbrechen und Verlauf funktionieren wie bisher. Es wird nichts installiert oder gestartet; der Rechner
 muss bereits laufen. Der SSH-Weg über die Hosts unter „Clients“ bleibt daneben bestehen.
 
+Eine Demo dieses Wegs im WLAN, mit Skripten, beschreibt [remote-demo.md](remote-demo.md).
+
 ## Gekoppelt: was man tun kann
 
 | Knopf | Wirkung |

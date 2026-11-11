@@ -14,7 +14,7 @@ SOURCE = Path(os.environ.get('PHI_SPACES_SOURCE', str(ROOT.parent / 'phi-spaces'
 RUNTIME = ROOT / 'runtime'
 ASSETS = ROOT / 'android/app/src/main/assets'
 FILES = ['server.mjs', 'common.mjs', 'remote-env.mjs', 'env-server.mjs', 'pi-serverd.mjs',
-         'space-keystore.mjs', 'spaces-mobile.mjs', 'remote-client.mjs', 'remote-provision.mjs', 'remote-state.mjs', 'phi-spaces.mjs', 'package.json',
+         'space-keystore.mjs', 'spaces-mobile.mjs', 'remote-client.mjs', 'remote-provision.mjs', 'remote-state.mjs', 'remote-calls.mjs', 'phi-spaces.mjs', 'package.json',
          'package-lock.json', 'public', 'node_modules', 'space-examples']
 
 source_available = (SOURCE / 'scripts/bundle-mobile.mjs').is_file()
@@ -29,6 +29,14 @@ if not (ASSETS / 'rootfs.bin').is_file():
 for name in FILES:
     if name not in ('phi-spaces.mjs', 'space-examples') and not (RUNTIME / name).exists():
         raise SystemExit(f'Required runtime input missing: {name}')
+# A packaged module that imports a sibling the list leaves out starts on the phone and dies there (node exits 1,
+# PiService restarts it forever): refuse the build instead.
+import re
+for name in FILES:
+    if name.endswith('.mjs') and (RUNTIME / name).is_file():
+        for sibling in re.findall(r"""(?:from|import)\s*\(?\s*['"]\./([^'"/]+)['"]""", (RUNTIME / name).read_text(encoding='utf-8')):
+            if sibling not in FILES:
+                raise SystemExit(f'{name} imports ./{sibling}, which is not packaged: add it to FILES in scripts/prepare-runtime.py')
 if source_available:
     subprocess.run(['npm', 'run', 'bundle'], cwd=SOURCE, check=True,
                    env={**os.environ, 'PHI_SPACES_MOBILE_ROOT': str(ROOT)})
