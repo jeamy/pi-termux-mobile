@@ -75,7 +75,8 @@ async function call(action, body = {}, button) {
   const buttons = [...document.querySelectorAll('button')]; buttons.forEach((b) => (b.disabled = true));
   const label = button?.textContent; if (button) { button.textContent = 'Läuft …'; button.classList.add('sp-busy-btn'); }
   showResult(action, '');
-  if (action !== 'status') say('Läuft …', 'busy');
+  // the pressed button shows that it runs; the bar only when no button does
+  if (action !== 'status') say(button ? '' : 'Läuft …', button ? '' : 'busy');
   try {
     const response = await fetch('/api/spaces/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-token': token }, body: JSON.stringify(body) });
     const reply = await response.json();
@@ -92,7 +93,7 @@ async function call(action, body = {}, button) {
 }
 
 for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => call(button.dataset.action, {}, button));
-for (const [id, action] of [['prepare', 'prepare'], ['data', 'dataHost']]) $(id).addEventListener('submit', (event) => { event.preventDefault(); call(action, Object.fromEntries([...new FormData(event.target)].map(([k, v]) => [k, String(v).trim()]))); });
+for (const [id, action] of [['prepare', 'prepare'], ['data', 'dataHost']]) $(id).addEventListener('submit', (event) => { event.preventDefault(); call(action, Object.fromEntries([...new FormData(event.target)].map(([k, v]) => [k, String(v).trim()])), event.submitter); });
 $('pair').addEventListener('submit', async (event) => {
   event.preventDefault(); const input = $('enroll-token'); let value = input.value.trim(), controlSpaceId; input.value = '';
   if (!value) { say('Bitte den Kopplungscode einfügen.', 'err'); return; }
@@ -102,7 +103,7 @@ $('pair').addEventListener('submit', async (event) => {
       if (qr.v !== 1 || qr.endpoint !== status.profile?.endpoint || (status.profile?.controlSpaceId && qr.space !== status.profile.controlSpaceId)) throw new Error('Der QR-Inhalt gehört zu einem anderen Koordinator als dem vorbereiteten.');
       value = qr.token; controlSpaceId = qr.space;
     }
-    await call('enroll', { token: value, controlSpaceId });
+    await call('enroll', { token: value, controlSpaceId }, event.submitter);
   } catch (error) { say(plain(error.message), 'err'); }
   finally { value = ''; }
 });

@@ -72,12 +72,17 @@ const plain = (m) => String(m)
 
 /** Sends one admin command (or resends a known one) and waits for its result while the page is visible. */
 async function command(kind, args = {}, commandId, { quiet = false } = {}) {
-  const buttons = [...document.querySelectorAll('main button')]; buttons.forEach(b => b.disabled = true);
-  if (!quiet) say(`${KIND[kind] ?? kind}: wird gesendet …`, 'busy');
+  const buttons = [...document.querySelectorAll('main button')];
+  // the pressed button shows that the command runs; the bar only when no button does
+  const pressed = document.activeElement?.tagName === 'BUTTON' && document.activeElement.closest('main') ? document.activeElement : null, label = pressed?.textContent;
+  if (pressed) { pressed.textContent = 'Läuft …'; pressed.classList.add('sp-busy-btn'); }
+  buttons.forEach(b => b.disabled = true);
+  const busy = (text) => { if (!quiet) say(pressed ? '' : text, pressed ? '' : 'busy'); };
+  busy(`${KIND[kind] ?? kind}: wird gesendet …`);
   try {
     const sent = await api('admin', { kind, args, ...(commandId ? { commandId } : {}) });
     let result = sent.result; const id = sent.operation.commandId;
-    if (!quiet) say(`${KIND[kind] ?? kind}: angenommen, warte auf das Ergebnis … (Auftrag ${id})`, 'busy');
+    busy(`${KIND[kind] ?? kind}: angenommen, warte auf das Ergebnis … (Auftrag ${id})`);
     for (let i = 0; !result && i < 30; i++) {
       if (document.visibilityState !== 'visible') { say(`Auftrag ${id} läuft auf dem Koordinator weiter; das Ergebnis steht dann unter Übersicht → Vorgänge.`); return null; }
       await sleep(1000); result = (await api('result', { commandId: id })).result;
@@ -88,7 +93,7 @@ async function command(kind, args = {}, commandId, { quiet = false } = {}) {
     else if (quiet) say(''); else say(`${KIND[kind] ?? kind}: erledigt.`, 'ok');
     return failed ? null : result.result;
   } catch (error) { say(plain(error.message), 'err'); return null; }
-  finally { buttons.forEach(b => b.disabled = false); }
+  finally { buttons.forEach(b => b.disabled = false); if (pressed) { pressed.textContent = label; pressed.classList.remove('sp-busy-btn'); } }
 }
 
 // ── Übersicht ────────────────────────────────────────────────────────────────
