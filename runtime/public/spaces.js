@@ -12,8 +12,12 @@ const STATES = {
 };
 const stepOf = (p) => !p ? 'prepare' : p.state === 'paired' ? 'paired' : 'pair';
 
+let fade;
 function say(text, kind = '') {
+  clearTimeout(fade);
   message.hidden = !text; message.textContent = text || ''; message.className = 'sp-msg' + (kind ? ' sp-' + kind : '');
+  // a success leaves the top after a while (it also stays next to its button); errors stay until the next action
+  if (kind === 'ok') fade = setTimeout(() => { message.hidden = true; }, 8000);
 }
 
 function showProfile(profile) {
@@ -50,8 +54,27 @@ const plain = (m) => String(m)
   .replace(/.*ECONNREFUSED.*/, 'Keine Verbindung: Läuft der Koordinator, und ist das Gerät im selben WLAN?')
   .replace(/.*(ETIMEDOUT|EHOSTUNREACH|ENETUNREACH).*/, 'Adresse nicht erreichbar: Ist das Gerät im selben WLAN?');
 
-async function call(action, body = {}) {
+/** What a reply means, in words, for the actions whose result is otherwise only in the raw view. */
+function describe(action, reply) {
+  const r = reply.result ?? {}, p = reply.profile ?? {};
+  switch (action) {
+    case 'authenticate': return [`Schlüsselbeweis gültig: Der Koordinator hat das Gerät „${r.peerId ?? p.peerId}“ mit seinem Schlüssel erkannt (${String(r.keyId ?? p.keyId ?? '').slice(0, 16)}…).`, 'ok'];
+    case 'rotate': return r.state === 'completed' ? ['Schlüssel erneuert: Der Koordinator hat den neuen Schlüssel übernommen. Zum Abschluss „Erneuerung auswerten“ tippen.', 'ok'] : [`Erneuerung gesendet (Stand: ${r.state ?? 'unbekannt'}). „Erneuerung auswerten“ fragt nach, ob sie übernommen wurde.`, ''];
+    case 'rotationStatus': return r.state === 'completed' ? [`Erneuerung abgeschlossen: Das Gerät arbeitet mit dem neuen Schlüssel (${String(p.keyId ?? '').slice(0, 16)}…).`, 'ok'] : r.state === 'prepared' ? ['Die Erneuerung wurde noch nicht gesendet. „Schlüssel erneuern“ setzt sie fort.', ''] : [`Erneuerung noch offen (Stand: ${r.state ?? 'unbekannt'}). Später erneut auswerten.`, ''];
+    case 'enrollStatus': return r.state === 'paired' || r.state === 'done' ? ['Gekoppelt: Der Koordinator hat das Gerät aufgenommen.', 'ok'] : [`Kopplung noch offen (Stand: ${r.state ?? 'unbekannt'}). Später erneut prüfen.`, ''];
+    default: return null;
+  }
+}
+const RESULT_BOX = { authenticate: 'adv-result', rotate: 'adv-result', rotationStatus: 'adv-result', enrollStatus: 'pair-result' };
+function showResult(action, text, kind) {
+  const box = RESULT_BOX[action] && $(RESULT_BOX[action]); if (!box) return;
+  box.hidden = !text; box.textContent = text || ''; box.className = 'sp-result' + (kind ? ' sp-' + kind : '');
+}
+
+async function call(action, body = {}, button) {
   const buttons = [...document.querySelectorAll('button')]; buttons.forEach((b) => (b.disabled = true));
+  const label = button?.textContent; if (button) button.textContent = 'Läuft …';
+  showResult(action, '');
   if (action !== 'status') say('Läuft …');
   try {
     const response = await fetch('/api/spaces/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-token': token }, body: JSON.stringify(body) });
@@ -60,13 +83,15 @@ async function call(action, body = {}) {
     raw.textContent = JSON.stringify(reply, null, 2); $('sp-raw-box').hidden = false;
     if ('profile' in reply) showProfile(reply.profile);
     if (action === 'objects') showSpace(reply.result);
-    if (action === 'status') say(''); else say('Erledigt.', 'ok');
+    const told = describe(action, reply);
+    if (action === 'status') say(''); else say(told ? told[0] : 'Erledigt.', told ? told[1] : 'ok');
+    if (told) showResult(action, ...told);
     return reply;
-  } catch (error) { say(plain(error.message), 'err'); }
-  finally { buttons.forEach((b) => (b.disabled = false)); }
+  } catch (error) { say(plain(error.message), 'err'); showResult(action, plain(error.message), 'err'); }
+  finally { buttons.forEach((b) => (b.disabled = false)); if (button) button.textContent = label; }
 }
 
-for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => call(button.dataset.action));
+for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => call(button.dataset.action, {}, button));
 for (const [id, action] of [['prepare', 'prepare'], ['data', 'dataHost']]) $(id).addEventListener('submit', (event) => { event.preventDefault(); call(action, Object.fromEntries([...new FormData(event.target)].map(([k, v]) => [k, String(v).trim()]))); });
 $('pair').addEventListener('submit', async (event) => {
   event.preventDefault(); const input = $('enroll-token'); let value = input.value.trim(), controlSpaceId; input.value = '';

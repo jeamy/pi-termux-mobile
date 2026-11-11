@@ -24,6 +24,7 @@
   <label>Kopplungscode oder QR-Inhalt<textarea id="enroll-token" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token oder {&quot;v&quot;:1,…} einfügen"></textarea></label>
   <button type="submit" class="btn-primary sp-wide">Koppeln</button>
   <button type="button" data-action="enrollStatus" class="sp-wide">Stand der Kopplung prüfen</button>
+  <p id="pair-result" class="sp-result" role="status" hidden></p>
 </form>
 
 <div class="section-hdr" data-step="data">3 · Space verbinden</div>
@@ -47,9 +48,13 @@
 
 <details class="card sp-more" data-step="paired">
   <summary>Erweitert</summary>
+  <p id="adv-result" class="sp-result" role="status" hidden></p>
   <button type="button" data-action="authenticate" class="sp-wide">Schlüsselbeweis prüfen</button>
+  <p class="sp-hint">Meldet sich beim Koordinator an und zeigt, ob Schlüssel und Kopplung noch gelten. Ändert nichts.</p>
   <button type="button" data-action="rotate" class="sp-wide">Schlüssel erneuern</button>
+  <p class="sp-hint">Legt einen neuen Geräteschlüssel an und tauscht ihn beim Koordinator gegen den alten.</p>
   <button type="button" data-action="rotationStatus" class="sp-wide">Erneuerung auswerten</button>
+  <p class="sp-hint">Fragt nach, ob eine Erneuerung übernommen wurde.</p>
 </details>
 
 <details class="card sp-more" id="sp-raw-box" hidden><summary>Antwort im Rohformat</summary><pre id="space-result" class="sp-raw"></pre></details>

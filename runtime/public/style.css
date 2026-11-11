@@ -382,3 +382,10 @@ dialog select, dialog input {
 .ctl-calc:empty { display: none; }
 .ctl-plan { margin-top: 8px; }
 .ctl .sp-form input[type="datetime-local"] { color-scheme: dark; }
+
+/* the status line stays in view while the page scrolls; results show next to their buttons */
+.sp > .sp-msg { position: sticky; top: 0; z-index: 4; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+.ctl > .sp-msg { top: 58px; }
+.sp-result { margin: 10px 0 2px; padding: 10px 12px; border-radius: var(--rad-sm); background: var(--surf2); font-size: 14px; line-height: 1.45; }
+.sp-result.sp-ok { color: var(--success); border: 1px solid rgba(52, 211, 112, .4); }
+.sp-result.sp-err { color: #fff; background: var(--danger-bg); border: 1px solid var(--danger); }

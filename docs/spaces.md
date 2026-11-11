@@ -78,6 +78,10 @@ Erscheint, sobald das Gerät gekoppelt ist. Hier steht, welchen Space **Space ö
 | Schlüssel erneuern | Legt einen neuen Geräteschlüssel an und lässt ihn vom Koordinator gegen den alten tauschen. Der alte Schlüssel gilt danach nicht mehr. Bricht die Verbindung mittendrin ab, steht oben „Eine Schlüsselerneuerung ist offen“; dann **Erneuerung auswerten**. Eine zweite Erneuerung startet erst, wenn die erste abgeschlossen ist. |
 | Erneuerung auswerten | Fragt nach, ob der Koordinator die offene Erneuerung übernommen hat. Wenn ja, arbeitet das Gerät ab dann mit dem neuen Schlüssel. Nach einer abgeschlossenen Erneuerung zeigt es deren Ergebnis. |
 
+Während eine Anfrage läuft, zeigt der gedrückte Knopf „Läuft …“. Das Ergebnis erscheint in Worten direkt über den
+Knöpfen (grün: gelungen, rot: Fehler) und zusätzlich oben in der Meldungszeile, die beim Scrollen sichtbar bleibt.
+Dasselbe gilt für „Stand der Kopplung prüfen“.
+
 **Antwort im Rohformat** zeigt die letzte Antwort der Runtime als JSON, für die Fehlersuche.
 
 ## Statuskarte
