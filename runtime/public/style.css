@@ -352,3 +352,32 @@ dialog select, dialog input {
 .client-edit input { width: 100%; box-sizing: border-box; background: var(--surf2); color: var(--text); border: 1px solid var(--border); border-radius: var(--rad); padding: 11px 12px; font-size: 15px; }
 .client-edit-bar { display: flex; gap: 8px; }
 .client-edit-bar button { flex: 1; }
+
+/* ── Spaces-Steuerung (steuerung.html) ───────────────────────────────────── */
+.ctl-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px; background: var(--bg); scrollbar-width: none; }
+.ctl-tabs::-webkit-scrollbar { display: none; }
+.ctl-tabs button { flex: 1 0 auto; padding: 9px 14px; border-radius: 999px; background: var(--surf2); color: var(--muted); font-size: 14px; border: 1px solid var(--border); }
+.ctl-tabs button[aria-selected="true"] { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+.ctl-intro { margin: 4px 14px 10px; }
+.ctl-pad { margin: -4px 14px 8px; }
+.ctl-card { display: flex; flex-direction: column; gap: 6px; }
+.ctl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ctl-head b { font-size: 15px; overflow-wrap: anywhere; }
+.ctl-text { margin: 0; font-size: 14px; }
+.ctl-sub { font-size: 13px; font-weight: 600; margin-top: 6px; }
+.ctl-badge { flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.ctl-ok   { background: rgba(52, 211, 112, .15); color: var(--success); }
+.ctl-warn { background: rgba(250, 185, 40, .15); color: var(--warn); }
+.ctl-err  { background: var(--danger-bg); color: #ff8a8a; }
+.ctl-dim  { background: var(--surf3); color: var(--muted); }
+.ctl-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.ctl-row button { flex: 1 1 auto; padding: 11px 12px; font-size: 14px; border-radius: var(--rad); }
+.ctl-danger { background: var(--danger-bg) !important; color: #ff8a8a !important; border: 1px solid var(--danger) !important; }
+.ctl-confirm { margin-top: 8px; padding: 12px; border-radius: var(--rad); border: 1px solid var(--danger); background: var(--surf2); font-size: 14px; }
+.ctl-confirm p { margin: 0 0 4px; }
+.ctl-new summary { cursor: pointer; font-weight: 600; color: var(--primary); padding: 4px 0; font-size: 15px; }
+.ctl-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ctl-calc { margin: 10px 0 0; font-size: 13px; color: var(--text); }
+.ctl-calc:empty { display: none; }
+.ctl-plan { margin-top: 8px; }
+.ctl .sp-form input[type="datetime-local"] { color-scheme: dark; }

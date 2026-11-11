@@ -483,6 +483,10 @@ See ANALYSE.md for the full evaluation and upstream facts.
   with their Chord 1.1.0 override.
 - Clients: a host's name and address can be edited in place (✎); the entry keeps
   its place in the list.
+- Spaces control (`steuerung.html`) rebuilt for the phone: tabs (overview, runs, workers,
+  Spaces, more), states in plain words, a hint under every field, confirmations on the page
+  instead of browser dialogs, an inline time field for scheduled pause/resume. What every
+  field means: [docs/steuerung.md](docs/steuerung.md) (German, like the page).
 
 ### 0.0.7 — 2026-11-04
 

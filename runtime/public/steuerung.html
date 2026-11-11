@@ -1,57 +1,129 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>pi mobile — Steuerung</title><link rel="stylesheet" href="style.css"></head>
-<body data-page="spacectl"><header><div id="menubar"></div></header><main id="keys-page">
-<p class="key-empty">Aufträge gehen als Admin-Commands an den Koordinator. Erfolg wird erst nach dessen Ergebnis angezeigt; bei Zeitüberschreitung bleibt die Auftrags-ID erhalten.</p>
-<p id="ctl-message" role="status" class="key-empty"></p>
+<body data-page="spacectl"><header><div id="menubar"></div></header><main id="ctl-page" class="sp ctl">
 
-<div class="section-hdr">Hinweise</div>
-<div class="card"><button data-load="alerts">Hinweise laden</button></div>
-<div id="alerts"></div>
+<nav class="ctl-tabs" role="tablist">
+  <button type="button" role="tab" data-tab="overview">Übersicht</button>
+  <button type="button" role="tab" data-tab="runs">Läufe</button>
+  <button type="button" role="tab" data-tab="workers">Worker</button>
+  <button type="button" role="tab" data-tab="spaces">Spaces</button>
+  <button type="button" role="tab" data-tab="more">Mehr</button>
+</nav>
 
-<div class="section-hdr">Vorgänge</div>
-<div class="card"><button data-load="operations">Vorgänge aktualisieren</button></div>
-<div id="operations"></div>
+<p id="ctl-message" role="status" class="sp-msg" hidden></p>
 
-<div class="section-hdr">Läufe</div>
-<div class="card"><button data-load="runs">Läufe laden</button></div>
-<div id="runs"></div>
-<form id="sieve" class="card">
-<label>Lauf-ID<input name="runId" required pattern="[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}" autocomplete="off"></label>
-<label>Start<input name="start" type="number" min="0" value="1" required></label>
-<label>Exklusive Obergrenze<input name="end" type="number" min="2" value="1001" required></label>
-<label>Blockgröße<input name="blockSize" type="number" min="1" max="4096" value="128" required></label>
-<label>Space-IDs der Members (kommagetrennt)<input name="members" required autocomplete="off"></label>
-<button type="submit">Primzahlsieb starten</button></form>
+<!-- ── Übersicht ─────────────────────────────────────────────────────────── -->
+<section data-panel="overview" hidden>
+  <p class="sp-hint ctl-intro">Diese Seite schickt Aufträge an den <b>Koordinator</b>, mit dem das Gerät unter „Spaces“ gekoppelt ist. Ein Auftrag gilt erst als erledigt, wenn der Koordinator sein Ergebnis meldet. Jeder Auftrag hat eine <b>Auftrags-ID</b>; geht die Verbindung verloren, wird mit derselben ID nachgefragt statt neu gestartet.</p>
 
-<div class="section-hdr">Worker</div>
-<div class="card"><button data-load="workers">Worker laden</button></div>
-<div id="workers"></div>
-<form id="setworkers" class="card">
-<label>Zuweisung<input name="assignmentId" required autocomplete="off"></label>
-<label>Host-ID<input name="hostId" required autocomplete="off"></label>
-<label>Workerart<input name="kind" value="sieve" required autocomplete="off"></label>
-<label>Ziel-Space-ID<input name="targetSpace" required autocomplete="off"></label>
-<label>Lauf-ID (optional)<input name="runId" autocomplete="off"></label>
-<label>Anzahl (0 stoppt nach dem laufenden Task)<input name="count" type="number" min="0" max="64" value="1" required></label>
-<button type="submit">Anzahl setzen</button></form>
+  <div class="section-hdr">Hinweise <button type="button" data-load="alerts">↻</button></div>
+  <p class="sp-hint ctl-pad">Warnungen des Koordinators, etwa Hosts ohne Lebenszeichen oder hängende Läufe.</p>
+  <div id="alerts"></div>
 
-<div class="section-hdr">Spaces</div>
-<form id="space-create" class="card">
-<label>Host-ID<input name="hostId" required autocomplete="off"></label>
-<label>Alias<input name="alias" required pattern="[a-z0-9][a-z0-9._-]{0,63}" autocomplete="off"></label>
-<button type="submit">Space anlegen oder vorhandenen wiederverwenden</button></form>
-<form id="space-change" class="card">
-<label>Host-ID<input name="hostId" required autocomplete="off"></label>
-<label>Space-ID<input name="spaceId" required autocomplete="off"></label>
-<button type="submit" value="archiveSpace">Archivieren</button><button type="submit" value="reactivateSpace">Reaktivieren</button><button type="submit" value="deleteSpace">Löschen</button></form>
+  <div class="section-hdr">Vorgänge <button type="button" data-load="operations">↻</button></div>
+  <p class="sp-hint ctl-pad">Die Aufträge, die <b>dieses Gerät</b> gesendet hat, mit ihrem Stand. Ein offener Vorgang kann mit derselben ID erneut abgefragt werden.</p>
+  <div id="operations"></div>
+</section>
 
-<div class="section-hdr">Deployment</div>
-<form id="deployment" class="card">
-<label>Deployment-Config (JSON, ohne Geheimnisse)<textarea name="config" rows="6" spellcheck="false" autocomplete="off"></textarea></label>
-<button type="submit" value="planDeployment">Plan anzeigen</button><button type="submit" value="exportDeployment">Angewendeten Stand exportieren</button></form>
-<div id="deployment-result"></div>
+<!-- ── Läufe ─────────────────────────────────────────────────────────────── -->
+<section data-panel="runs" hidden>
+  <p class="sp-hint ctl-intro">Ein <b>Lauf</b> ist eine verteilte Rechenaufgabe, hier das Primzahlsieb. Seine Tasks liegen in den Spaces seiner <b>Members</b>; Worker holen sie dort ab. Pausieren, Fortsetzen und Stoppen wirken auf alle Members gemeinsam und gelten erst, wenn jeder Member bestätigt hat.</p>
 
-<div class="section-hdr">Audit</div>
-<div class="card"><button data-load="audit">Letzte Admin-Aufträge laden</button></div>
-<div id="audit"></div>
+  <div class="section-hdr">Läufe <button type="button" data-load="runs">↻</button></div>
+  <div id="runs"></div>
+
+  <details class="card ctl-new" id="sieve-box">
+    <summary>＋ Neuen Primzahlsieb-Lauf starten</summary>
+    <form id="sieve" class="sp-form">
+      <label>Lauf-ID<input name="runId" required pattern="[a-zA-Z0-9][a-zA-Z0-9._:\-]{0,95}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Name des Laufs, frei wählbar und eindeutig. Er beginnt mit einem Buchstaben oder einer Ziffer, danach sind auch <code>. _ : -</code> erlaubt, höchstens 96 Zeichen. Derselbe Name startet keinen zweiten Lauf.</p>
+      <div class="ctl-two">
+        <label>Von<input name="start" type="number" min="0" value="1" required inputmode="numeric"></label>
+        <label>Bis (ohne)<input name="end" type="number" min="2" value="1001" required inputmode="numeric"></label>
+      </div>
+      <p class="sp-hint">Der Zahlenbereich, der gesiebt wird: von „Von“ bis ausschließlich „Bis“. 1 bis 1001 prüft die Zahlen 1 bis 1000.</p>
+      <label>Blockgröße<input name="blockSize" type="number" min="1" max="4096" value="128" required inputmode="numeric"></label>
+      <p class="sp-hint">Wie viele Zahlen ein Task umfasst (1 bis 4096). Kleinere Blöcke ergeben mehr Tasks und verteilen sich feiner auf die Worker.</p>
+      <label>Members (Space-IDs)<textarea name="members" rows="2" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="space-id-1, space-id-2"></textarea></label>
+      <p class="sp-hint">Die Spaces, in denen die Tasks des Laufs liegen, durch Komma oder Zeilenumbruch getrennt. Die Liste steht nach dem Start fest.</p>
+      <p class="ctl-calc" id="sieve-calc"></p>
+      <button type="submit" class="btn-primary sp-wide">Lauf starten</button>
+    </form>
+  </details>
+</section>
+
+<!-- ── Worker ────────────────────────────────────────────────────────────── -->
+<section data-panel="workers" hidden>
+  <p class="sp-hint ctl-intro">Ein <b>Worker</b> ist ein Prozess auf einem Host, der Tasks aus einem Space holt und abarbeitet. Eine <b>Zuweisung</b> legt fest, wie viele Worker welcher Art auf welchem Host für welchen Space laufen sollen. Der Host meldet zurück, wie viele tatsächlich laufen.</p>
+
+  <div class="section-hdr">Zuweisungen <button type="button" data-load="workers">↻</button></div>
+  <div id="workers"></div>
+
+  <details class="card ctl-new" id="workers-box">
+    <summary>＋ Zuweisung anlegen oder ändern</summary>
+    <form id="setworkers" class="sp-form">
+      <label>Name der Zuweisung<input name="assignmentId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Frei wählbar. Mit einem vorhandenen Namen wird diese Zuweisung geändert, mit einem neuen wird eine angelegt.</p>
+      <label>Host-ID<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Der Host, auf dem die Worker laufen sollen, mit seiner ID in der Föderation.</p>
+      <label>Workerart<input name="kind" value="sieve" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Welches Programm der Worker ausführt. Für das Primzahlsieb ist das <code>sieve</code>. Der Host muss diese Art kennen, sonst lehnt er ab.</p>
+      <label>Ziel-Space-ID<input name="targetSpace" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Der Space, aus dem die Worker ihre Tasks holen, meist ein Member des Laufs.</p>
+      <label>Lauf-ID (optional)<input name="runId" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="sp-hint">Bindet die Worker an einen Lauf: Sie nehmen nur dessen Tasks und halten an, wenn er pausiert.</p>
+      <label>Anzahl<input name="count" type="number" min="0" max="64" value="1" required inputmode="numeric"></label>
+      <p class="sp-hint">Wie viele Worker laufen sollen (0 bis 64). <b>0</b> beendet alle, jeden nach seinem laufenden Task; nichts wird mitten in der Arbeit abgebrochen.</p>
+      <div class="ctl-confirm" id="workers-confirm" hidden></div>
+      <button type="submit" class="btn-primary sp-wide">Anzahl setzen</button>
+    </form>
+  </details>
+</section>
+
+<!-- ── Spaces ────────────────────────────────────────────────────────────── -->
+<section data-panel="spaces" hidden>
+  <p class="sp-hint ctl-intro">Benannte Spaces auf den Hosts der Föderation anlegen und außer Betrieb nehmen. Der Lebenslauf eines Spaces: <b>aktiv → archiviert → gelöscht</b>. Ein archivierter Space nimmt keine neuen Einträge an und kann reaktiviert werden.</p>
+
+  <div class="section-hdr">Space anlegen</div>
+  <form id="space-create" class="card sp-form">
+    <label>Host-ID<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <p class="sp-hint">Der Host, auf dem der Space liegen soll.</p>
+    <label>Alias<input name="alias" required pattern="[a-z0-9][a-z0-9._\-]{0,63}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <p class="sp-hint">Lesbarer Name, nur Kleinbuchstaben, Ziffern und <code>. _ -</code>, höchstens 64 Zeichen. Gibt es den Alias auf dem Host schon, wird der vorhandene Space zurückgegeben statt eines zweiten.</p>
+    <button type="submit" class="btn-primary sp-wide">Space anlegen</button>
+  </form>
+
+  <div class="section-hdr">Space ändern</div>
+  <form id="space-change" class="card sp-form">
+    <label>Host-ID<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label>Space-ID<input name="spaceId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <p class="sp-hint">Die feste ID des Spaces, wie sie beim Anlegen gemeldet wurde, nicht der Alias.</p>
+    <div class="ctl-row">
+      <button type="submit" value="archiveSpace">Archivieren</button>
+      <button type="submit" value="reactivateSpace">Reaktivieren</button>
+      <button type="submit" value="deleteSpace" class="ctl-danger">Löschen</button>
+    </div>
+    <p class="sp-hint"><b>Löschen</b> gelingt nur bei einem archivierten, leeren Space, der zu keinem Lauf gehört. Seine ID bleibt danach reserviert.</p>
+    <div class="ctl-confirm" id="space-confirm" hidden></div>
+  </form>
+</section>
+
+<!-- ── Mehr ──────────────────────────────────────────────────────────────── -->
+<section data-panel="more" hidden>
+  <div class="section-hdr">Deployment</div>
+  <form id="deployment" class="card sp-form">
+    <p class="sp-hint">Eine Deployment-Config beschreibt Hosts, Spaces und Worker einer Föderation als JSON (siehe <code>npm run bootstrap</code> in phi-spaces). Keine Geheimnisse einfügen: Schlüssel und Tokens gehören nicht hinein.</p>
+    <label>Deployment-Config (JSON)<textarea name="config" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+    <button type="submit" value="planDeployment" class="btn-primary sp-wide">Plan anzeigen</button>
+    <p class="sp-hint">Zeigt, welche Schritte nötig wären und ob etwas blockiert. Es wird nichts geändert.</p>
+    <button type="submit" value="exportDeployment" class="sp-wide">Angewendeten Stand exportieren</button>
+    <p class="sp-hint">Holt den Stand, den der Koordinator für dieses Deployment zuletzt angewendet hat. Aus der Config wird nur das Feld <code>deployment</code> gelesen.</p>
+  </form>
+  <div id="deployment-result"></div>
+
+  <div class="section-hdr">Audit <button type="button" data-load="audit">↻</button></div>
+  <p class="sp-hint ctl-pad">Die letzten 50 Admin-Aufträge aller Geräte: was, wann, von wem und mit welchem Ausgang.</p>
+  <div id="audit"></div>
+</section>
+
 </main><script type="module" src="steuerung.js"></script></body></html>
