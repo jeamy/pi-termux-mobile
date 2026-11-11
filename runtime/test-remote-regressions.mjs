@@ -151,3 +151,49 @@ test('hung RPC times out and disconnect during reconnect cancels the tunnel', as
   assert.deepEqual(readdirSync(f.socketDir), []);
   await assert.rejects(remote.reconnect(), /disconnected/);
 });
+
+test('an idle events long poll answers after the host waited its 25 s, not with a timeout', { timeout: 90_000 }, async (t) => {
+  const f = fixture();
+  const opts = await daemon(f.dir, t);
+  let remote;
+  t.after(async () => { await remote?.disconnect(); f.cleanup(); });
+  remote = await attachRemote({ ...f, ...opts });
+  const { id } = await remote.create();
+  await remote.attach(id);
+  const history = await remote.request('history');
+  const started = Date.now();
+  const page = await remote.request('events', [{ after: history.cursor, epoch: history.epoch }]);
+  assert.ok(Date.now() - started >= 20_000, 'the host held the poll');
+  assert.deepEqual(page.events, []);
+  assert.equal(remote.connected, true);
+});
+
+test('a daemon that goes away is reported as lost; the host\'s own errors are not', async (t) => {
+  const f = fixture();
+  const opts = await daemon(f.dir, t);
+  let remote;
+  t.after(async () => { await remote?.disconnect(); f.cleanup(); });
+  remote = await attachRemote({ ...f, ...opts, requestTimeoutMs: 5_000 });
+  const lost = [];
+  remote.onLost((why) => lost.push(why));
+  await assert.rejects(remote.attach('999'), /unknown session/);
+  assert.deepEqual(lost, [], 'an error of the host leaves the connection');
+  assert.equal(remote.connected, true);
+  // the daemon goes: the tunnel stays, the socket behind it is gone
+  const pid = JSON.parse(readFileSync(`${f.dir}/.pi-serverd/serverd.lock`, 'utf8')).pid;
+  process.kill(pid, 'SIGKILL');
+  await assert.rejects(remote.list());
+  assert.equal(lost.length, 1, 'the link is reported lost once');
+  assert.equal(remote.connected, false);
+});
+
+test('the conversation socket reaches only the calls, never the daemon\'s Spaces; space RPC is a socket of its own', async (t) => {
+  const f = fixture();
+  const opts = await daemon(f.dir, t);
+  const { connectSpace } = await import('./phi-spaces.mjs');
+  const link = connectSpace(`unix:${opts.remoteSock}`, { callTimeoutMs: 5_000 });
+  t.after(() => { link.close(); f.cleanup(); });
+  const spaces = (await link.space.spaces()).map((s) => s.alias);
+  assert.deepEqual(spaces, ['default'], 'a store of its own, with nothing of the daemon\'s');
+  assert.equal(existsSync(`${f.dir}/.pi-serverd/space.sock`), false, 'no space RPC socket without a configured peer');
+});

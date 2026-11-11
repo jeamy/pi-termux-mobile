@@ -1,13 +1,15 @@
-// pi-serverd.mjs — durable pi sessions over the pi-server protocol (unix socket).
-// Remote attach flow: `ssh -L <local.sock>:<socket>` from the client machine,
-// then pi-client over the unix transport; same machine: connect the socket directly.
+// pi-serverd.mjs — durable pi sessions, answered as calls over a space (remote-calls.mjs; phi-spaces
+// docs/m1-mobile.en.md "Remote conversations over a Space").
+// Remote attach flow: `ssh -L <local.sock>:<socket>` from the client machine, then a phi-spaces client on the
+// forwarded socket (remote-client.mjs attachRemote); same machine: connect the socket directly.
 //
-// Env: HOME (storage root), PI_SERVERD_SOCK (socket path, default
-// $HOME/.pi-serverd/server.sock), PI_SERVERD_ID (stable serverId, default:
-// persisted random uuid), PI_WORKDIR (agent cwd), PI_PROVIDER/PI_MODEL.
+// Env: HOME (storage root), PI_SERVERD_SOCK (the conversation socket, default $HOME/.pi-serverd/server.sock),
+// PI_SERVERD_ID (stable serverId, default: persisted random uuid), PI_WORKDIR (agent cwd), PI_PROVIDER/PI_MODEL.
 // PI_SERVERD_STATE_DIR and PI_SERVERD_AUTH_FILE isolate test/alternate runtimes.
-// Space RPC is opt-in: PI_SERVERD_SPACE_PRINCIPAL is a configured peer id;
-// PI_SERVERD_SPACE_ROLES is a comma-separated explicit role list. Never trust client JSON for identity.
+// Space RPC on the daemon's own store is opt-in and on a socket of its own (PI_SERVERD_SPACE_SOCK, default
+// $HOME/.pi-serverd/space.sock): PI_SERVERD_SPACE_PRINCIPAL is a configured peer id, PI_SERVERD_SPACE_ROLES a
+// comma-separated explicit role list; or the federation (PI_SERVERD_FEDERATION_CONFIG). Never trust client JSON for
+// identity.
 import { existsSync, chmodSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -15,9 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { createUnixServer } from '@earendil-works/pi-server/unix';
-import { SessionNotFoundError } from '@earendil-works/pi-server';
-import { SpaceService, StaticIdentity, withSpaceService, startConfiguredFederation, PhiSpaces, connectSpace, createSpace } from './phi-spaces.mjs';
+import { SpaceService, StaticIdentity, startConfiguredFederation, PhiSpaces, connectSpace, createSpace, openOwnMemoryHost, serveSpace, startService } from './phi-spaces.mjs';
 import { serveRemoteCalls } from './remote-calls.mjs';
 import {
   acquireOwnerLock, agentContext, createCredentialStore, createEventHub, createModelCatalog,
@@ -32,6 +32,7 @@ const spacePeer = process.env.PI_SERVERD_SPACE_PRINCIPAL;
 const spaceRoles = (process.env.PI_SERVERD_SPACE_ROLES || "").split(",").map(x => x.trim()).filter(Boolean);
 if (Boolean(spacePeer) !== Boolean(spaceRoles.length)) throw new Error("space RPC requires both PI_SERVERD_SPACE_PRINCIPAL and PI_SERVERD_SPACE_ROLES");
 const SOCK_PATH = process.env.PI_SERVERD_SOCK || `${STATE_DIR}/server.sock`;
+const SPACE_SOCK = process.env.PI_SERVERD_SPACE_SOCK || `${STATE_DIR}/space.sock`;
 const WORKDIR = process.env.PI_WORKDIR || HOME;
 const LEGACY_MANIFEST = `${STATE_DIR}/sessions.json`;
 const DB = `${STATE_DIR}/harness.sqlite`;
@@ -39,7 +40,7 @@ const DB = `${STATE_DIR}/harness.sqlite`;
 // A space kept in harness.sqlite by an older version is not carried over (phi-spaces decision D6).
 const SPACE_DB = `${STATE_DIR}/space.sqlite`;
 
-// private state dir: pi-server does not authenticate unix-socket peers
+// private state dir: whoever reaches the sockets is trusted as their peer (SSH authenticates it)
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 try { chmodSync(STATE_DIR, 0o700); } catch {}
 mkdirSync(path.dirname(SOCK_PATH), { recursive: true, mode: 0o700 });
@@ -56,6 +57,7 @@ if (!serverId) {
 }
 
 // --- harness ----------------------------------------------------------------
+class SessionNotFoundError extends Error {}
 
 const ctx = BACKGROUND_CONTEXT;
 const credentials = createCredentialStore(process.env.PI_SERVERD_AUTH_FILE || `${HOME}/.pi/agent/auth.json`);
@@ -109,7 +111,7 @@ async function withSessionMutation(id, invoke) {
   finally { if (sessionMutations.get(id) === pending) sessionMutations.delete(id); }
 }
 
-// --- the members, shared by the pi-server listener and the calls over a Space ------------
+// --- the members of the calls (remote-calls.mjs MEMBERS) -----------------------------------
 
 /** One chat member of a session (`args` as the caller sent them). */
 async function chatMember(sessionId, member, args, c) {
@@ -172,8 +174,8 @@ async function chatMember(sessionId, member, args, c) {
     ? withSessionMutation(sessionId, invoke) : invoke();
 }
 
-/** One sessions member. `attachSession` binds a pi-server presentation; over a Space the phone keeps the session itself. */
-async function sessionsMember(member, args, c, attachSession = async () => {}) {
+/** One sessions member. The phone keeps the session it attached and names it in its chat calls. */
+async function sessionsMember(member, args, c) {
   const call = { member, args };
   switch (call.member) {
     case 'list':
@@ -203,8 +205,9 @@ async function sessionsMember(member, args, c, attachSession = async () => {}) {
     }
     case 'attach': {
       const id = String(call.args[0]);
-      await conversationOf(id);
-      await attachSession(id, c);
+      // Sessions created before a credential existed have no model: give them the current default. Never overrides
+      // an explicit choice.
+      await ensureModel(await conversationOf(id), models, c);
       return { ok: true };
     }
     case 'rename': {
@@ -219,63 +222,40 @@ async function sessionsMember(member, args, c, attachSession = async () => {}) {
   }
 }
 
-// --- routed session handles ---------------------------------------------------
+// --- the sockets -------------------------------------------------------------------------
 
-function routedSession(sessionId) {
-  return {
-    async attachClient() {
-      const conv = await conversationOf(sessionId);
-      // Sessions created before a credential existed have no model: give them
-      // the current default. Never overrides an explicit choice.
-      await ensureModel(conv, models, ctx);
-      return {
-        async invokeService(call, publish, context) {
-          if (call.serviceId !== 'chat') throw new Error(`unknown service: ${call.serviceId}`);
-          return chatMember(sessionId, call.member, call.args, agentContext(context ?? ctx));
-        },
-        release() {},
-      };
-    },
-    terminated: new Promise(() => {}),
-    async close() {},
-  };
+const handleCall = ({ service, session, member, args }) => service === 'sessions'
+  ? sessionsMember(member, args, agentContext(ctx)) : chatMember(session, member, args, agentContext(ctx));
+const onCallError = (e) => console.error('remote calls:', e?.message || e);
+
+// The conversation socket (SOCK_PATH, what the phone forwards over SSH) serves a store of its own, in memory, that
+// holds nothing but the calls and their answers. Its peer is whoever reached it through SSH: it can write calls and
+// take answers there, never reach the daemon's Spaces. Its reaper returns a call whose transaction ran out.
+const callsStore = openOwnMemoryHost();
+const stopCallsReaper = await startService(callsStore, ctx);
+const callsServer = await serveSpace(new SpaceService({ host: callsStore, ctx, hostId: serverId, authorityId: serverId,
+  identity: new StaticIdentity({ ssh: { principal: { peerId: 'ssh' }, roles: ['member'] } }) }),
+  { listen: { path: SOCK_PATH }, connection: () => ({ peerId: 'ssh' }) });
+const calls = [serveRemoteCalls(new PhiSpaces(callsStore, ctx, Date.now), handleCall, { onError: onCallError })];
+
+// Space RPC on the daemon's own store, on a socket of its own: the federation's service, or one configured peer
+// with its explicit roles. SSH access alone grants no space role; without either there is no such socket.
+let spaceServer = null;
+if (federation) {
+  spaceServer = await serveSpace({ handleText: async (text, conn) => JSON.stringify(await federation.service.handle(JSON.parse(text), conn)) },
+    { listen: { path: SPACE_SOCK }, connection: () => ({}) });
+} else if (spacePeer) {
+  const spaceService = new SpaceService({ host: space, ctx, hostId: serverId, authorityId: serverId,
+    identity: new StaticIdentity({ [spacePeer]: { principal: { peerId: spacePeer }, roles: spaceRoles } }) });
+  spaceServer = await serveSpace(spaceService, { listen: { path: SPACE_SOCK }, connection: () => ({ peerId: spacePeer }) });
 }
+console.log(`pi-serverd on ${SOCK_PATH} (serverId ${serverId})${spaceServer ? `, space on ${SPACE_SOCK}` : ''}`);
 
-const host = {
-  serverServices: {
-    attachClient(presentation) {
-      return {
-        async invokeService(call, publish, context) {
-          if (call.serviceId !== 'sessions') throw new Error(`unknown service: ${call.serviceId}`);
-          return sessionsMember(call.member, call.args, agentContext(context ?? ctx), (id, c) => presentation.attachSession(id, c));
-        },
-        release() {},
-      };
-    },
-  },
-  async resolveSession(sessionId) {
-    if (!(await sessions.get(sessionId))) throw new SessionNotFoundError(`unknown session: ${sessionId}`);
-    return { id: String(sessionId) };
-  },
-  async openSession(metadata) {
-    return routedSession(metadata.id);
-  },
-};
-
-// The private socket has one administrator-configured space identity. SSH access alone grants no space role.
-const spaceIdentity = new StaticIdentity(spacePeer ? { [spacePeer]: { principal: { peerId: spacePeer }, roles: spaceRoles } } : {});
-const spaceService = new SpaceService({ host: space, ctx, identity: spaceIdentity, hostId: serverId, authorityId: serverId });
-host.serverServices = withSpaceService(host.serverServices, federation?.service || spaceService, federation?.trustedConnection || (() => ({ peerId: spacePeer || '' })));
-
-const server = createUnixServer(host, { serverId, path: SOCK_PATH, mode: 0o600 });
-await server.start();
-console.log(`pi-serverd on ${SOCK_PATH} (serverId ${serverId})`);
-
-// Remote conversations over a Space (remote-calls.mjs; phi-spaces docs/m1-mobile.en.md). PI_SERVERD_REMOTE_SPACE:
-// `local[:alias]` serves the named Space `alias` (default `remote`) of this daemon's own store, which the phone reaches
-// through the federation gate with a grant; `unix:/path` or `tcp:host:port` serves another space server's default
-// Space (PI_SERVERD_REMOTE_SPACE_NAME names a named one). Unset: off.
-let remoteCalls = null, remoteLink = null;
+// Conversations over a further Space, PI_SERVERD_REMOTE_SPACE: `local[:alias]` serves the named Space `alias`
+// (default `remote`) of this daemon's own store, which the phone reaches through the federation gate with a grant;
+// `unix:/path` or `tcp:host:port` serves another space server's default Space (PI_SERVERD_REMOTE_SPACE_NAME names a
+// named one). Unset: only the conversation socket.
+let remoteLink = null;
 const remoteSpec = process.env.PI_SERVERD_REMOTE_SPACE;
 if (remoteSpec) {
   let remoteSpace;
@@ -287,10 +267,7 @@ if (remoteSpec) {
     remoteLink = connectSpace(remoteSpec, process.env.PI_SERVERD_REMOTE_SPACE_NAME ? { space: process.env.PI_SERVERD_REMOTE_SPACE_NAME } : {});
     remoteSpace = remoteLink.space;
   }
-  remoteCalls = serveRemoteCalls(remoteSpace, ({ service, session, member, args }) => service === 'sessions'
-    ? sessionsMember(member, args, agentContext(ctx)) : chatMember(session, member, args, agentContext(ctx)), {
-    onError: (e) => console.error('remote calls:', e?.message || e),
-  });
+  calls.push(serveRemoteCalls(remoteSpace, handleCall, { onError: onCallError }));
   console.log(`pi-serverd: remote calls over ${remoteSpec}`);
 }
 
@@ -299,8 +276,9 @@ async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   console.log(`pi-serverd: ${signal}, closing`);
-  try { await server.close?.(); } catch {}
-  try { await remoteCalls?.stop(); remoteLink?.close(); } catch {}
+  try { await callsServer.close(); await spaceServer?.close(); } catch {}
+  try { await Promise.all(calls.map((c) => c.stop())); remoteLink?.close(); } catch {}
+  try { await stopCallsReaper(); await callsStore.close(ctx); } catch {}
   try { await events.close(); } catch {}
   try { await stopSpaces(); } catch {}
   try { await harness.close(ctx); } catch (e) { console.error('harness.close:', e?.message || e); }

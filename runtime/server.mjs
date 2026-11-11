@@ -58,7 +58,7 @@ const REMOTES = {
 const MAX_BODY = 1024 * 1024;
 const PI_PKG = '@earendil-works/pi-coding-agent';
 const EARENDIL_PKGS = ['@earendil-works/pi-coding-agent','@earendil-works/pi-durable',
-  '@earendil-works/pi-ai','@earendil-works/pi-client','@earendil-works/pi-server','@earendil-works/chord'];
+  '@earendil-works/pi-ai','@earendil-works/chord'];
 function piInstalledVersion() {
   try { return JSON.parse(readFileSync(path.join(ROOT,'node_modules',PI_PKG,'package.json'),'utf8')).version; } catch { return null; }
 }
@@ -294,8 +294,8 @@ function serveStatic(res, pathname) {
   stream.pipe(res);
 }
 
-// --- remote pi-server attach state ------------------------------------------------------
-// pi-client never reconnects on its own: a lost tunnel is rebuilt here with
+// --- remote attach state -------------------------------------------------------------------
+// The remote never reconnects on its own: a lost tunnel is rebuilt here with
 // backoff and the last session is attached again. Prompts carry a requestId,
 // so a retried prompt is never answered twice.
 
@@ -489,7 +489,7 @@ async function handleApi(req, res, url, p) {
     return json(res, r === 0 ? 200 : 500, { ok: r === 0, ...sshKeyInfo() });
   }
 
-  // --- remote pi-server attach
+  // --- remote attach
   if (p === '/api/remote/trust-host' && req.method === 'POST') {
     const target = str(body.target);
     const { fingerprint } = await trustStatus(target);

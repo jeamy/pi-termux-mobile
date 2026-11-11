@@ -1,13 +1,14 @@
-// SSH Unix-socket bridge. Private sockets keep other phone apps out of the
-// unauthenticated pi-server protocol; SSH authenticates the remote peer.
+// SSH Unix-socket bridge. SSH authenticates the remote peer; private sockets keep other phone apps out. Through the
+// tunnel the phone reaches pi-serverd's conversation socket, a space of its own that holds nothing but the
+// conversation calls (remote-calls.mjs; phi-spaces docs/m1-mobile.en.md).
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { Client } from '@earendil-works/pi-client';
-import { createUnixTransportFactory } from '@earendil-works/pi-client/unix';
+import { connectSpace } from './phi-spaces.mjs';
+import { callRemote } from './remote-calls.mjs';
 
 const strictJson = (args) => JSON.parse(JSON.stringify(args ?? []));
 
@@ -98,7 +99,7 @@ export async function attachRemote({ ssh, prefix = '', socketDir, serverId, remo
   const sid = serverId || await sshExec('cat ~/.pi-serverd/server-id');
   const hostKey = await sshHostFingerprint(ssh, prefix, { signal: alive, timeoutMs });
 
-  let tunnel = null, client = null, opening = null;
+  let tunnel = null, link = null, opening = null, session = null;
   let closed = false, lostFired = false;
   const lostHandlers = new Set();
   const fireLost = (why) => {
@@ -108,9 +109,9 @@ export async function attachRemote({ ssh, prefix = '', socketDir, serverId, remo
   };
 
   async function teardown() {
-    const c = client, t = tunnel;
-    client = null; tunnel = null;
-    try { await c?.dispose(); } catch {}
+    const l = link, t = tunnel;
+    link = null; tunnel = null;
+    try { l?.close(); } catch {}
     try { t?.kill('SIGKILL'); } catch {}
     try { unlinkSync(localSock); } catch {}
   }
@@ -138,23 +139,21 @@ export async function attachRemote({ ssh, prefix = '', socketDir, serverId, remo
           let lastError;
           for (let i = 0; i < 20; i++) {
             bounded.throwIfAborted();
-            const c = new Client({ serverId: sid, transportFactory: createUnixTransportFactory({ path: localSock }) });
-            const abortClient = () => { void c.dispose(); };
-            bounded.addEventListener('abort', abortClient, { once: true });
+            const l = connectSpace(`unix:${localSock}`, { callTimeoutMs: 60_000, connectTimeoutMs: 5_000 });
+            const abortLink = () => l.close();
+            bounded.addEventListener('abort', abortLink, { once: true });
             try {
-              await c.connect();
+              const hello = await l.space.info();
               bounded.throwIfAborted();
-              c.onConnectionStateChange((change) => {
-                if (client === c && change.state === 'disconnected') fireLost('connection closed');
-              });
-              client = c;
+              if (hello.hostId && hello.hostId !== sid) throw new Error(`the socket belongs to server ${hello.hostId}, not ${sid}`);
+              link = l;
               lostFired = false;
               return;
             } catch (e) {
-              await c.dispose();
+              l.close();
               bounded.throwIfAborted();
               lastError = e;
-            } finally { bounded.removeEventListener('abort', abortClient); }
+            } finally { bounded.removeEventListener('abort', abortLink); }
             await sleep(150, undefined, { signal: bounded });
           }
           throw lastError ?? new Error('connect failed');
@@ -168,26 +167,33 @@ export async function attachRemote({ ssh, prefix = '', socketDir, serverId, remo
   alive.addEventListener('abort', onAbort, { once: true });
   try { await open(); } catch (e) { alive.removeEventListener('abort', onAbort); throw e; }
 
-  const call = (target, serviceId, member, args) => withDeadline((bounded) => {
-    if (closed || !client?.connected) throw new Error('disconnected');
-    return client.request(target, { serviceId, member, args: strictJson(args) }, bounded);
-  }, { signal: alive, timeoutMs: requestTimeoutMs });
-  const serverCall = (member, args = []) => call({ serverId: sid }, 'sessions', member, args);
+  const call = (member, args = [], s = null) => withDeadline(async () => {
+    const l = link;
+    if (closed || !l || lostFired) throw new Error('disconnected');
+    try {
+      // requestTimeoutMs bounds every call, the long poll of `events` (25 s on the host) included
+      return await callRemote(l.space, { session: s, member, args: strictJson(args) }, { timeoutMs: requestTimeoutMs });
+    } catch (e) {
+      // the host's own error or no answer in time leave the connection as it is; anything else is the link
+      if (!e?.remote && link === l) fireLost(`connection: ${e?.message || e}`);
+      throw e;
+    }
+  }, { signal: alive, timeoutMs: requestTimeoutMs + 5_000 });
 
   return {
-    get client() { return client; },
+    get client() { return link ? { attachment: session ? { serverId: sid, sessionId: session } : null } : null; },
     serverId: sid, target: ssh, hostKey,
-    get connected() { return !closed && !alive.aborted && Boolean(client?.connected) && !lostFired; },
+    get connected() { return !closed && !alive.aborted && Boolean(link) && !lostFired; },
     onLost(handler) { lostHandlers.add(handler); return () => lostHandlers.delete(handler); },
-    list: () => serverCall('list'),
-    models: () => serverCall('models'),
-    create: (opts = {}) => serverCall('create', [opts]),
-    delete: (id) => serverCall('delete', [id]),
-    rename: (id, name) => serverCall('rename', [id, name]),
-    attach: (id) => serverCall('attach', [id]),
+    list: () => call('list'),
+    models: () => call('models'),
+    create: (opts = {}) => call('create', [opts]),
+    delete: (id) => call('delete', [String(id)]),
+    rename: (id, name) => call('rename', [String(id), name]),
+    async attach(id) { const r = await call('attach', [String(id)]); session = String(id); return r; },
     async request(member, args = []) {
-      if (!client?.attachment) throw new Error('not attached');
-      return call(client.attachment, 'chat', member, args);
+      if (!session) throw new Error('not attached');
+      return call(member, args, session);
     },
     async reconnect() {
       if (closed || alive.aborted) throw new Error('disconnected');

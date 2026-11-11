@@ -24,10 +24,16 @@ export function createRemoteState({ prefix = '', stateDir, authFile, assertTrust
       try {
         if (copyAuth) await assertTrusted(target);
         controller.signal.throwIfAborted();
-        await ensure({ ssh: target, prefix, copyAuth, allowUpdate, authFile, signal: controller.signal,
+        const ensured = await ensure({ ssh: target, prefix, copyAuth, allowUpdate, authFile, signal: controller.signal,
           log: (l) => { if (current()) { this.log.push(l); if (this.log.length > 200) this.log.shift(); } } });
         controller.signal.throwIfAborted();
-        remote = await attach({ ssh: target, prefix, socketDir: path.join(stateDir, 'tunnels'), signal: controller.signal });
+        try {
+          remote = await attach({ ssh: target, prefix, socketDir: path.join(stateDir, 'tunnels'), signal: controller.signal });
+        } catch (e) {
+          // a daemon older than this app may speak another protocol (before the calls over a space: pi-server)
+          if (ensured?.outdated && current()) throw new Error(`pi-serverd on ${target} is outdated and does not answer this app (${e?.message || e}); connect again and allow the update`);
+          throw e;
+        }
         if (!current()) throw new Error('connection cancelled');
         this.remote = remote;
         this.status = 'connected';

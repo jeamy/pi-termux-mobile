@@ -20,11 +20,8 @@ The durable harness gives: SQLite-backed conversations
 conversations owned by the calling task), model selection per conversation,
 and per-conversation execution environments — including remote hosts.
 
-The runtime pins the agent-side Pi packages to 1.5.2. `pi-server` and `pi-client` have no
-1.5 release: they use their latest published 1.1.0, with their transport-side
-Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.5.2;
-the RPC boundary explicitly adapts older contexts to its telemetry-aware context.
-Do not deduplicate the transport onto Chord 1.5: its legacy RPC exports are absent there.
+The runtime pins the agent-side Pi packages to 1.5.2, with one Chord (1.5.2) and no overrides. Remote
+conversations need no `pi-server`/`pi-client`: they are calls over a phi-spaces space (`runtime/remote-calls.mjs`).
 Tool schemas use `pi-schema`. Conversation watches replace the removed `watchEvents`
 and `viewState` APIs; the bridge retains paged transcript history and forwards
 self-contained snapshots to the existing local and remote renderers.
@@ -109,7 +106,7 @@ and grants. Client request fields cannot override either identity.
   (ed25519): generate, show pubkey, interactive `ssh-copy-id` in the
   terminal page.
 - **Remote** (`remote.html`) — attach to durable sessions on other machines
-  via the pi-server protocol: choose a saved SSH host, select/create/remove a
+  as calls over a space (through an SSH tunnel, or a federation Space): choose a saved SSH host, select/create/remove a
   session, and choose that remote session's model (see below).
 - **pi CLI** (`terminal.html`) — real pi TUI over WebSocket → `script` PTY
   → `node cli.js`, with on-screen extra keys (esc/tab/ctrl/arrows/pgup/pgdn)
@@ -210,13 +207,16 @@ Clients → *generate key* → *add client* (`user@host[:port]`) → `⇧key`
 (interactive ssh-copy-id, type remote password) → `▸_` connects. The menu
 item *pi CLI (ssh)* does a one-off connect without saving a host.
 
-### 2. pi-server protocol (multi-client attach to durable sessions)
+### 2. pi-serverd (multi-client attach to durable sessions)
 
-`runtime/pi-serverd.mjs` is a `pi-server` (`createUnixServer`) host app:
-durable Harness + own SQLite under `~/.pi-serverd/`, services
-`sessions.list/create/delete/attach/models` and
-`chat.prompt/abort/state/configure/history/events` (events via long-poll
-cursor — Chord subscriptions deliberately skipped).
+`runtime/pi-serverd.mjs` hosts a durable Harness + own SQLite under `~/.pi-serverd/` and answers
+`sessions.list/create/delete/rename/attach/models` and
+`chat.prompt/abort/compact/state/configure/history/events` (events via long-poll
+cursor) as calls over a space (`runtime/remote-calls.mjs`, phi-spaces docs/m1-mobile.en.md): the phone writes a
+`RemoteCall` entry, the daemon takes it in a transaction and answers with `RemoteAnswer`; a call whose daemon died
+before answering comes back. Its conversation socket (`~/.pi-serverd/server.sock`) serves a store of its own that
+holds nothing but these calls. Space RPC on the daemon's store is a separate socket (`space.sock`), only with
+`PI_SERVERD_SPACE_PRINCIPAL`/`PI_SERVERD_SPACE_ROLES` or a federation.
 
 ```bash
 # on the remote machine (Node >= 22.19.0, same runtime dir, uses ~/.pi/agent/auth.json)
@@ -227,8 +227,8 @@ The phone bridge (`runtime/remote-client.mjs`) forwards the remote unix
 socket through the saved SSH client entry to a unix socket in the app-private
 directory (`ssh -N -L ~/.pi-mobile/tunnels/<id>.sock:~/.pi-serverd/server.sock`,
 OpenSSH 6.7+). A loopback TCP port would be reachable by every app on the
-phone, and pi-server does not authenticate peers; SSH is the only auth. It then
-attaches via `@earendil-works/pi-client`'s unix transport. A dropped tunnel is
+phone, and the socket trusts whoever reaches it; SSH is the only auth. It then
+connects a phi-spaces client to the forwarded socket and makes its calls there. A dropped tunnel or connection is
 rebuilt with backoff and the session is re-attached; prompts carry a
 `requestId`, so a retried prompt is answered exactly once. `user@host:port` is converted to OpenSSH's `-p port`
 form. The Remote page connects and loads sessions as soon as a host is
@@ -250,8 +250,7 @@ aborts its running work, then removes its registry entry, so it no longer
 appears or can be attached through Remote. Its transcript is kept in SQLite; it
 is not a destructive purge. Existing attachments reject further calls after deletion;
 mutating calls are serialized with deletion so new work cannot slip past its abort.
-The state directory is `0700` and the socket `0600`. `pi-client` runs
-on the phone as the protocol client, while the durable harness, model calls,
+The state directory is `0700` and the socket `0600`. The phone only writes calls and takes answers, while the durable harness, model calls,
 and tools run in `pi-serverd` on the remote host. For the full interactive Pi
 TUI instead, use **Clients → ▸_** or **pi CLI (ssh)**; run it in `tmux` when an
 SSH disconnect must not end the TUI process.
@@ -350,7 +349,7 @@ Volta, asdf and nodenv set `PATH` in `~/.bashrc` — through a prelude that sour
   `common.mjs` (shared harness setup, credential store with file lock, durable
   session registry, sequenced event hub, single-owner lock),
   `pi-serverd.mjs` (remote session daemon; space in `space.sqlite`),
-  `remote-client.mjs` (pi-client + ssh tunnel), `remote-provision.mjs` /
+  `remote-client.mjs` (ssh tunnel + calls over a space), `remote-calls.mjs` (the calls, both sides), `remote-provision.mjs` /
   `remote-state.mjs` (host provisioning and its state),
   `remote-env.mjs`/`env-server.mjs` (tool exec),
   `spaces-mobile.mjs` (pairing, Spaces and admin-command bridge behind
@@ -479,8 +478,11 @@ See ANALYSE.md for the full evaluation and upstream facts.
 ### Unreleased
 
 - Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
-  `chord`, `pi-coding-agent`, `pi-schema`); `pi-client`/`pi-server` stay at 1.1.0
-  with their Chord 1.1.0 override.
+  `chord`, `pi-coding-agent`, `pi-schema`).
+- `pi-client`, `pi-server` and `pi-protocol` are gone, with their Chord 1.1.0 overrides: the SSH path makes the
+  same calls over a space through its tunnel (`attachRemote` keeps its interface). pi-serverd's conversation socket
+  serves a store of its own; Space RPC moved to `space.sock`. An outdated daemon whose update is declined is
+  reported as such.
 - Clients: a host's name and address can be edited in place (✎); the entry keeps
   its place in the list.
 - Spaces control (`steuerung.html`) rebuilt for the phone: tabs (overview, runs, workers,

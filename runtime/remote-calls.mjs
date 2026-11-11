@@ -78,12 +78,18 @@ export function serveRemoteCalls(space, handle, { workers = 8, waitMs = 20_000, 
   return { async stop() { halt.abort(); await Promise.race([Promise.allSettled(running), sleep(1_000)]); } };
 }
 
-/** Answer the phone's call: writes it and takes its answer. Throws the host's error message. */
+/** The host carried the call out and answered with an error (not a transport failure): `remote` is true. */
+export class RemoteError extends Error { constructor(message) { super(message); this.name = 'RemoteError'; this.remote = true; } }
+/** No answer came within the time: the call may still run on the host. */
+export class RemoteTimeout extends Error { constructor(message) { super(message); this.name = 'RemoteTimeout'; this.remote = true; } }
+
+/** Answer the phone's call: writes it and takes its answer. Throws the host's error as RemoteError; anything else
+ *  that throws is the space or its transport. */
 export async function callRemote(space, { session = null, member, args = [] }, { timeoutMs = 30_000, leaseMs = 300_000 } = {}) {
   const callId = 'c-' + randomUUID();
   await space.write({ type: CALL, fields: { callId, session, member, args } }, null, leaseMs);
   const last = await space.take({ type: ANSWER, fields: { callId, last: true } }, timeoutMs);
-  if (!last) throw new Error(`timeout: no answer to ${member} within ${timeoutMs} ms (call ${callId} may still run)`);
+  if (!last) throw new RemoteTimeout(`timeout: no answer to ${member} within ${timeoutMs} ms (call ${callId} may still run)`);
   const { attempt, parts } = last.fields;
   let text = '';
   for (let part = 0; part < parts - 1; part++) {
@@ -92,7 +98,7 @@ export async function callRemote(space, { session = null, member, args = [] }, {
     text += piece.fields.text;
   }
   const answer = JSON.parse(text + last.fields.text);
-  if (!answer.ok) throw new Error(answer.error);
+  if (!answer.ok) throw new RemoteError(answer.error);
   return answer.result;
 }
 

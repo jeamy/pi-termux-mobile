@@ -106,3 +106,11 @@ test('a remote over a Space is owned by its generation like an SSH one', async (
   assert.equal(state.status, 'connected');
   await state.disconnect();
 });
+
+test('an outdated daemon whose update was declined and that does not answer gets a clear message', async () => {
+  const state = createRemoteState({ stateDir: '/tmp', assertTrusted: async () => {},
+    ensure: async () => ({ started: false, outdated: true }),
+    attach: async () => { throw new Error('remote timeout after 15s'); } });
+  await assert.rejects(state.connect('u@h'), /outdated and does not answer this app.*allow the update/);
+  assert.equal(state.status, 'disconnected');
+});

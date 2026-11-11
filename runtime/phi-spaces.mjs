@@ -17090,33 +17090,6 @@ init_canonical();
 init_enroll();
 init_auth();
 
-// src/pi-server.ts
-function withSpaceService(base, space, trustedConnection) {
-  return {
-    async attachClient(presentation, context) {
-      const original = await base.attachClient(presentation, context);
-      const conn = await trustedConnection();
-      return {
-        async invokeService(call, ...rest) {
-          if (call.serviceId !== "space") return original.invokeService(call, ...rest);
-          const arg = call.args[0];
-          if (!arg || typeof arg !== "object" || Array.isArray(arg) || arg.method !== call.member) return { ok: false, error: { code: "BadRequest", message: "space member and encoded method must agree" } };
-          return space.handle(arg, conn);
-        },
-        release: (...rest) => original.release(...rest)
-      };
-    }
-  };
-}
-function piServerTransport(invoke) {
-  return {
-    async request(text2) {
-      const call = JSON.parse(text2);
-      return JSON.stringify(await invoke({ serviceId: "space", member: call.method, args: [call] }));
-    }
-  };
-}
-
 // src/space-client.ts
 init_client();
 function parseTarget(spec) {
@@ -19095,7 +19068,6 @@ export {
   parseTarget,
   partitionRouterId,
   peek,
-  piServerTransport,
   primarySyncStorage,
   principalId,
   principalKey,
@@ -19181,7 +19153,6 @@ export {
   withAgentEventSink,
   withContextValue,
   withAgentEventSink as withEventSink,
-  withSpaceService,
   workerCommands,
   writeMember
 };

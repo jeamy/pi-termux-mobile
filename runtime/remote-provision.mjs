@@ -98,7 +98,7 @@ echo "auth=$([ -s "$HOME/.pi/agent/auth.json" ] && echo 1 || echo 0)"
 D="$HOME/${REMOTE_DIR}"
 echo "ver=$(cat "$D/.version" 2>/dev/null)"
 echo "deps=$(cat "$D/.deps" 2>/dev/null)"
-echo "nm=$([ -d "$D/node_modules/@earendil-works/pi-server" ] && echo 1 || echo 0)"
+echo "nm=$([ -d "$D/node_modules/@earendil-works/pi-durable" ] && echo 1 || echo 0)"
 ${PID}
 if [ "$p" != 0 ] && [ -S "$HOME/.pi-serverd/server.sock" ]; then echo running=1; else echo running=0; fi
 `;
@@ -187,7 +187,7 @@ export async function ensureRemoteServer({ ssh, prefix = '', log = () => {}, cop
       info.running = '0';
     }
   }
-  if (info.running === '1' && !allowUpdate) { log('outdated daemon: update skipped'); return { started: false }; }
+  if (info.running === '1' && !allowUpdate) { log('outdated daemon: update skipped'); return { started: false, outdated: true }; }
   if (!nodeSupported(info.node)) throw new Error(`Node.js >=22.19.0 required (found ${info.node || 'none'}). Update Node on the host first.`);
   if (!info.npm) throw new Error('npm not found on host');
   const base = `$HOME/.pi-mobile-remote`;
