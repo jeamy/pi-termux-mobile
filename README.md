@@ -487,6 +487,11 @@ See ANALYSE.md for the full evaluation and upstream facts.
   Spaces, more), states in plain words, a hint under every field, confirmations on the page
   instead of browser dialogs, an inline time field for scheduled pause/resume. What every
   field means: [docs/steuerung.md](docs/steuerung.md) (German, like the page).
+- Remote conversations over a Space instead of pi-server/pi-client (phi-spaces
+  docs/m1-mobile.en.md): pi-serverd answers calls taken from a Space
+  (`PI_SERVERD_REMOTE_SPACE`, `runtime/remote-calls.mjs`); Spaces → "Remote-Sitzungen über
+  Space" names the agent host, which then appears on the Remote page as "(über Space)" and is
+  reached with the device key and a coordinator grant, no SSH. The SSH path stays.
 - [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
   the three steps (prepare, pair, connect a Space), every field and button, the status
   card, error messages and what is kept on the device.

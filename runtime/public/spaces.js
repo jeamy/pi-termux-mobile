@@ -32,6 +32,7 @@ function showProfile(profile) {
     const want = el.dataset.step;
     el.hidden = want === 'data' ? step !== 'paired' : want !== step;
   }
+  if (profile) { const r = $('remote'); r.hostId.value ||= profile.remoteHostId ?? ''; r.endpoint.value ||= profile.remoteEndpoint ?? ''; if (profile.remoteSpace) r.space.value = profile.remoteSpace; }
   if (profile) { const f = $('data'); f.hostId.value ||= profile.dataHostId ?? ''; f.endpoint.value ||= profile.dataEndpoint ?? ''; f.space.value ||= profile.dataSpace ?? ''; }
 }
 
@@ -61,11 +62,12 @@ function describe(action, reply) {
     case 'authenticate': return [`Schlüsselbeweis gültig: Der Koordinator hat das Gerät „${r.peerId ?? p.peerId}“ mit seinem Schlüssel erkannt (${String(r.keyId ?? p.keyId ?? '').slice(0, 16)}…).`, 'ok'];
     case 'rotate': return r.state === 'completed' ? ['Schlüssel erneuert: Der Koordinator hat den neuen Schlüssel übernommen. Zum Abschluss „Erneuerung auswerten“ tippen.', 'ok'] : [`Erneuerung gesendet (Stand: ${r.state ?? 'unbekannt'}). „Erneuerung auswerten“ fragt nach, ob sie übernommen wurde.`, ''];
     case 'rotationStatus': return r.state === 'completed' ? [`Erneuerung abgeschlossen: Das Gerät arbeitet mit dem neuen Schlüssel (${String(p.keyId ?? '').slice(0, 16)}…).`, 'ok'] : r.state === 'prepared' ? ['Die Erneuerung wurde noch nicht gesendet. „Schlüssel erneuern“ setzt sie fort.', ''] : [`Erneuerung noch offen (Stand: ${r.state ?? 'unbekannt'}). Später erneut auswerten.`, ''];
+    case 'remoteHost': return [`Gespeichert: Unter „Remote“ steht jetzt „${p.remoteSpace} @ ${p.remoteEndpoint} (über Space)“ zur Auswahl.`, 'ok'];
     case 'enrollStatus': return r.state === 'paired' || r.state === 'done' ? ['Gekoppelt: Der Koordinator hat das Gerät aufgenommen.', 'ok'] : [`Kopplung noch offen (Stand: ${r.state ?? 'unbekannt'}). Später erneut prüfen.`, ''];
     default: return null;
   }
 }
-const RESULT_BOX = { authenticate: 'adv-result', rotate: 'adv-result', rotationStatus: 'adv-result', enrollStatus: 'pair-result' };
+const RESULT_BOX = { remoteHost: 'remote-result', authenticate: 'adv-result', rotate: 'adv-result', rotationStatus: 'adv-result', enrollStatus: 'pair-result' };
 function showResult(action, text, kind) {
   const box = RESULT_BOX[action] && $(RESULT_BOX[action]); if (!box) return;
   box.hidden = !text; box.textContent = text || ''; box.className = 'sp-result' + (kind ? ' sp-' + kind : '');
@@ -93,7 +95,7 @@ async function call(action, body = {}, button) {
 }
 
 for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => call(button.dataset.action, {}, button));
-for (const [id, action] of [['prepare', 'prepare'], ['data', 'dataHost']]) $(id).addEventListener('submit', (event) => { event.preventDefault(); call(action, Object.fromEntries([...new FormData(event.target)].map(([k, v]) => [k, String(v).trim()])), event.submitter); });
+for (const [id, action] of [['prepare', 'prepare'], ['data', 'dataHost'], ['remote', 'remoteHost']]) $(id).addEventListener('submit', (event) => { event.preventDefault(); call(action, Object.fromEntries([...new FormData(event.target)].map(([k, v]) => [k, String(v).trim()])), event.submitter); });
 $('pair').addEventListener('submit', async (event) => {
   event.preventDefault(); const input = $('enroll-token'); let value = input.value.trim(), controlSpaceId; input.value = '';
   if (!value) { say('Bitte den Kopplungscode einfügen.', 'err'); return; }

@@ -122,3 +122,47 @@ test('admin commands keep their command ID across a lost reply and a reopen, and
     assert.equal(notSent.state, 'notSent'); assert.equal(written.length, 2, 'nothing was written');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('remote conversations over a Space: key proof at the agent host, a grant from the coordinator on every call', async () => {
+  const { serveSpace, openOwnMemoryHost, SpaceService, StaticIdentity, PhiSpaces, createSpace } = await import('../runtime/phi-spaces.mjs');
+  const { serveRemoteCalls, remoteOverSpace } = await import('../runtime/remote-calls.mjs');
+  const { BACKGROUND_CONTEXT: ctx } = await import('../runtime/node_modules/@earendil-works/chord/dist/context/index.js');
+  const key = { alias: 'native', keyId: 'phone-key', algorithm: 'ecdsa-p256', publicKey: 'public', sign: async () => Buffer.from('fixture-signature') };
+  // the agent host's store: the named Space `remote`, served by its own loop
+  const host = openOwnMemoryHost();
+  await host.commit((tx) => createSpace(tx, 'remote', Date.now()), ctx);
+  const service = new SpaceService({ host, ctx, identity: new StaticIdentity({ phone: { principal: { peerId: 'phone' }, roles: ['member'] } }) });
+  const handled = [];
+  const loop = serveRemoteCalls(new PhiSpaces(host, ctx, Date.now, undefined, undefined, { space: 'remote' }), async (c) => { handled.push(c.member); return { sessions: [{ id: '7', name: 'über Space' }] }; }, { workers: 1, waitMs: 1_000 });
+  const servers = [], refused = [];
+  const start = async (hostId, inner) => {
+    const server = await serveSpace({ handleText: async (text, connection) => {
+      const call = JSON.parse(text);
+      const ok = (result) => JSON.stringify({ ok: true, result });
+      if (call.method === 'challenge') return ok({ gateHostId: hostId, observedPeerId: 'phone', connNonce: 'fixture', protocol: 1, issuedAt: Date.now() });
+      if (call.method === 'prove') { connection.state = { keyId: call.args.keyId }; return ok({ keyId: call.args.keyId, principal: 'phone', roles: ['member'] }); }
+      if (call.method === 'grant') return ok({ grant: { keyId: connection.state?.keyId ?? null } });
+      if (!connection.state || call.frame?.grant?.grant?.keyId !== connection.state.keyId) { refused.push([hostId, call.method]); return JSON.stringify({ ok: false, error: { code: 'PermissionDenied', message: 'no proof or grant' } }); }
+      if (!inner) throw new Error('unexpected call at ' + hostId + ': ' + call.method);
+      const { grant, ...frame } = call.frame; // the gate checked it; the space behind sees the phone's principal
+      return inner.handleText(JSON.stringify({ ...call, frame }), { peerId: 'phone' });
+    } }, { listen: { host: '127.0.0.1', port: 0 } });
+    servers.push(server); return `tcp://127.0.0.1:${server.address().port}`;
+  };
+  const dir = mkdtempSync(join(tmpdir(), 'mobile-remote-'));
+  let connection;
+  try {
+    const allowed = [];
+    const client = new MobileSpaces(join(dir, 'profile.json'), { androidSigner: async () => key, keyStoreCall: async (c) => { allowed.push(c.gateHostId); } });
+    client.save({ alias: key.alias, keyId: key.keyId, peerId: 'phone', controlHostId: 'control', endpoint: await start('control'), state: 'paired' });
+    await assert.rejects(client.openRemote(), /no agent host/);
+    await assert.rejects(client.call('remoteHost', { hostId: 'agent', endpoint: 'http://x:1', space: 'remote' }), /tcp:/);
+    await client.call('remoteHost', { hostId: 'agent', endpoint: await start('agent', service), space: 'remote' });
+    assert.deepEqual(allowed, ['agent'], 'the key is allowed at the agent host');
+    connection = await client.openRemote();
+    const remote = remoteOverSpace(connection.remote, { timeoutMs: 10_000 });
+    assert.deepEqual((await remote.list()).sessions, [{ id: '7', name: 'über Space' }]);
+    assert.deepEqual(handled, ['list']);
+    assert.deepEqual(refused, [], 'every call carried proof and grant');
+  } finally { connection?.close(); await loop.stop(); for (const server of servers) await server.close(); await host.close(ctx); rmSync(dir, { recursive: true, force: true }); }
+});

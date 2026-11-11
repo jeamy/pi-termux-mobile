@@ -26,6 +26,19 @@ export class MobileSpaces {
     remote = new RemoteSpace(socket, { space: data ? profile.dataSpace : 'control', signer, expectedGateHostId: host, ownPeerId: profile.peerId, grantProvider: () => (control?.remote || remote).requestGrant() });
     return { remote, close: () => { socket.close(); control?.close(); } };
   }
+  /**
+   * An authenticated client of the remote-conversation Space (profile.remote*): key proof at that host's gate, each
+   * call with a grant of the coordinator. Long-lived and outside `serial`, so the Remote page's polls never hold up
+   * the Spaces page. Returns { remote, close }.
+   */
+  async openRemote() {
+    const profile = this.read();
+    if (!profile || profile.state !== 'paired') throw new Error('pair the device under Spaces first');
+    if (!profile.remoteHostId || !profile.remoteEndpoint || !profile.remoteSpace) throw new Error('no agent host for remote conversations is set (Spaces → Remote-Sitzungen)');
+    const connection = await this.connect({ ...profile, dataHostId: profile.remoteHostId, dataEndpoint: profile.remoteEndpoint, dataSpace: profile.remoteSpace }, profile.alias, true);
+    try { await connection.remote.authenticate(); } catch (error) { connection.close(); throw error; }
+    return connection;
+  }
   async call(method, body = {}) {
     return this.serial(async () => {
       let profile = this.read();
@@ -40,6 +53,13 @@ export class MobileSpaces {
       }
       if (!profile) throw new Error('prepare the device identity first');
       if (method === 'dataHost') { if (!body.hostId || !body.endpoint || !body.space) throw new Error('host, endpoint and space are required'); const url = new URL(body.endpoint); if (url.protocol !== 'tcp:' || !url.port || url.username || url.password) throw new Error('invalid data endpoint'); await this.keys.keyStoreCall({ method: 'allowHost', alias: profile.alias, gateHostId: body.hostId }); Object.assign(profile, { dataHostId: body.hostId, dataEndpoint: body.endpoint, dataSpace: body.space }); this.save(profile); return { profile }; }
+      if (method === 'remoteHost') {
+        // the agent host whose conversations the Remote page reaches over a Space (remote-calls.mjs)
+        if (![body.hostId, body.space].every(v => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(v))) throw new Error('host and space are required');
+        const url = new URL(body.endpoint); if (url.protocol !== 'tcp:' || !url.port || url.username || url.password || url.search || url.hash) throw new Error('use tcp://OVERLAY-IP:PORT');
+        await this.keys.keyStoreCall({ method: 'allowHost', alias: profile.alias, gateHostId: body.hostId });
+        Object.assign(profile, { remoteHostId: body.hostId, remoteEndpoint: body.endpoint, remoteSpace: body.space }); this.save(profile); return { profile };
+      }
       if (method === 'rotate' && profile.rotation?.request) throw new Error('resolve the pending rotation before starting another');
       if (method === 'enroll' && (profile.state === 'paired' || profile.rotation)) throw new Error('device is already paired');
       if (['admin', 'result', 'operations'].includes(method) && profile.state !== 'paired') throw new Error('pair the device as admin first');

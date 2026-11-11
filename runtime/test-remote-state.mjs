@@ -88,3 +88,21 @@ test('healthy recovery reattaches the selected session', async () => {
   assert.equal(state.lastError, null);
   await state.disconnect();
 });
+
+test('a remote over a Space is owned by its generation like an SSH one', async () => {
+  const { state } = fixture();
+  const opened = deferred(), entered = deferred();
+  const late = { onLost() {}, disconnected: false, async disconnect() { this.disconnected = true; } };
+  const first = state.connectVia(() => { entered.resolve(); return opened.promise; });
+  const rejected = assert.rejects(first, /connection cancelled/);
+  await entered.promise;
+  await state.disconnect();
+  opened.resolve(late);
+  await rejected;
+  assert.equal(state.remote, null, 'a late open does not resurrect the connection');
+  assert.equal(late.disconnected, true, 'and is closed');
+  const own = { onLost() {}, async disconnect() {} };
+  assert.equal(await state.connectVia(async () => own), own);
+  assert.equal(state.status, 'connected');
+  await state.disconnect();
+});

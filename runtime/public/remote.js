@@ -95,7 +95,15 @@ async function checkLink() {
 
 // --- hosts / sessions -----------------------------------------------------------
 
+/** A host-select value that means: the agent host of the Spaces profile, over its Space (no SSH). */
+const VIA_SPACE = 'space:';
 async function loadHosts() {
+  const sp = await post('/api/spaces/status', {}).catch(() => null), pr = sp?.profile;
+  if (pr?.state === 'paired' && pr.remoteHostId && pr.remoteEndpoint) {
+    const o = document.createElement('option');
+    o.value = VIA_SPACE; o.textContent = `${pr.remoteHostId} (über Space)`;
+    hostSel.appendChild(o);
+  }
   const j = await getJson(API.clients);
   for (const c of j.clients ?? []) {
     const o = document.createElement('option');
@@ -204,7 +212,8 @@ async function connectHost() {
     try {
       // the bridge answers needsAuth / needsUpdate until the user decided; each answer is sent along
       const body = { target };
-      for (let i = 0; i < 4; i++) {
+      if (target === VIA_SPACE) r = await post(API.remoteConnectSpace, {}); // key proof and grant, no SSH, nothing to install
+      else for (let i = 0; i < 4; i++) {
         r = await post(API.remoteConnect, body);
         if (r.needsTrust) {
           if (await askTrustHost(target, r.fingerprint)) {
@@ -250,6 +259,7 @@ hostSel.addEventListener('change', () => {
 btnStop.addEventListener('click', async () => {
   const target = hostSel.value;
   if (!target || connecting) return;
+  if (target === VIA_SPACE) { transcript.sys('a host reached over its Space is stopped on that host itself'); return; }
   if (!confirm(`Stop pi-serverd on ${target}?\nRunning work on that host is aborted. It is started (and updated if needed) again on the next connect.`)) return;
   btnStop.disabled = true;
   try {

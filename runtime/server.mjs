@@ -19,6 +19,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { RemoteExecutionEnv } from './remote-env.mjs';
 import { parseSshTarget, sshHostFingerprint } from './remote-client.mjs';
 import { createRemoteState } from './remote-state.mjs';
+import { remoteOverSpace } from './remote-calls.mjs';
 import { copyAuthTo, probeRemote, remoteBash, runtimeHash, stopRemoteServer } from './remote-provision.mjs';
 import {
   acquireOwnerLock, agentOf, createCredentialStore, createModelCatalog, ensureModel, isBusy,
@@ -537,6 +538,16 @@ async function handleApi(req, res, url, p) {
     const remote = await remoteState.connect(target, { copyAuth: body.copyAuth === true, allowUpdate: body.allowUpdate === true });
     return json(res, 200, { ok: true, serverId: remote.serverId, hostKey: remote.hostKey, sessions: await remote.list() });
   }
+  if (p === '/api/remote/connect-space' && req.method === 'POST') {
+    // the conversations of the agent host set under Spaces → Remote-Sitzungen, over its Space (remote-calls.mjs)
+    const remote = await remoteState.connectVia(async () => {
+      const connection = await mobileSpaces.openRemote(), profile = mobileSpaces.read();
+      return Object.assign(remoteOverSpace(connection.remote, { close: () => connection.close() }), {
+        target: `${profile.remoteSpace} @ ${profile.remoteEndpoint}`, serverId: profile.remoteHostId, hostKey: null,
+      });
+    });
+    return json(res, 200, { ok: true, serverId: remote.serverId, hostKey: null, via: 'space', sessions: await remote.list() });
+  }
   if (p === '/api/remote/status' && req.method === 'GET') {
     return json(res, 200, { status: remoteState.status, error: remoteState.lastError, sessionId: remoteState.sessionId, log: remoteState.log, target: remoteState.remote?.target ?? null });
   }
@@ -568,7 +579,7 @@ async function handleApi(req, res, url, p) {
       case 'POST /api/remote/attach':
         await remote.attach(str(body.id));
         remoteState.sessionId = str(body.id);
-        return json(res, 200, { ok: true, target: remote.client.attachment });
+        return json(res, 200, { ok: true, target: remote.client?.attachment ?? remote.target ?? null });
       case 'POST /api/remote/prompt':
         return json(res, 200, await remote.request('prompt', [{
           message: String(body.message ?? ''), requestId: requestIdOf(body.requestId), whenBusy: whenBusyOf(body.whenBusy),

@@ -46,6 +46,17 @@
   <ul id="sp-objects" class="sp-objects"></ul>
 </section>
 
+<div class="section-hdr" data-step="data">4 · Remote-Sitzungen über Space</div>
+<form id="remote" class="card sp-form" data-step="data">
+  <p class="sp-hint">Der Rechner, dessen Agent-Sitzungen die Seite „Remote“ ohne SSH erreicht: pi-serverd mit <code>PI_SERVERD_REMOTE_SPACE=local</code> als Member der Föderation. Danach steht er unter „Remote“ in der Host-Auswahl mit dem Zusatz „über Space“.</p>
+  <label>Host-ID des Agent-Hosts<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <label>Endpunkt des Agent-Hosts<input name="endpoint" inputmode="url" placeholder="tcp://192.168.8.28:PORT" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <label>Space der Sitzungen<input name="space" value="remote" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <p class="sp-hint">Meist <code>remote</code> (der Standard von pi-serverd). Nur das Handy und der Agent-Host haben dort Zugang.</p>
+  <button type="submit" class="sp-wide">Speichern</button>
+  <p id="remote-result" class="sp-result" role="status" hidden></p>
+</form>
+
 <details class="card sp-more" data-step="paired">
   <summary>Erweitert</summary>
   <p id="adv-result" class="sp-result" role="status" hidden></p>

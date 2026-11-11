@@ -41,6 +41,33 @@ export function createRemoteState({ prefix = '', stateDir, authFile, assertTrust
         throw e;
       }
     },
+    /** Like connect, for a remote that `open(signal)` makes (the conversations over a Space): no SSH, no provisioning. */
+    async connectVia(open) {
+      const disconnecting = this.disconnect();
+      const generation = this.generation;
+      await disconnecting;
+      if (generation !== this.generation) throw Object.assign(new Error('connection cancelled'), { status: 409 });
+      const controller = this.controller = new AbortController();
+      const current = () => generation === this.generation && !controller.signal.aborted;
+      this.log = [];
+      this.status = 'connecting';
+      this.lastError = null;
+      let remote;
+      try {
+        remote = await open(controller.signal);
+        if (!current()) throw new Error('connection cancelled');
+        this.remote = remote;
+        this.status = 'connected';
+        remote.onLost((why) => { void this.recover(remote, why); });
+        return remote;
+      } catch (e) {
+        if (remote) await remote.disconnect();
+        if (!current()) throw Object.assign(new Error('connection cancelled'), { status: 409 });
+        this.status = 'disconnected';
+        this.lastError = String(e?.message || e);
+        throw e;
+      }
+    },
     async recover(remote, why) {
       if (this.remote !== remote || this.status === 'reconnecting') return;
       const generation = this.generation;

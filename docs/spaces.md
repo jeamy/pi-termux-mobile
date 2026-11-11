@@ -20,7 +20,7 @@ Hosts, die gemeinsam Spaces halten (Ablagen für Einträge, Aufgaben und Ergebni
 | **Geräteschlüssel** | Ein Schlüsselpaar im **Android Keystore**. Der private Teil verlässt das Gerät nie; das Gerät beweist damit bei jeder Verbindung, wer es ist („Schlüsselbeweis“). |
 | **Kopplungscode** | Ein einmaliger Code des Koordinators, mit dem er den Schlüssel dieses Geräts aufnimmt. Er wird nie gespeichert. |
 
-## Ablauf in drei Schritten
+## Ablauf in drei Schritten (und ein vierter für Remote)
 
 Die Seite zeigt immer nur den Schritt, der gerade dran ist. Oben steht die **Statuskarte** mit dem Stand und den
 gespeicherten Verbindungsdaten.
@@ -62,6 +62,24 @@ Erscheint, sobald das Gerät gekoppelt ist. Hier steht, welchen Space **Space ö
 | Space (ID oder Alias) | Welcher Space geöffnet wird, mit seiner festen ID oder seinem lesbaren Namen. |
 
 **Speichern** legt die Werte im Profil ab. Sie lassen sich jederzeit überschreiben.
+
+### 4 · Remote-Sitzungen über Space
+
+Erscheint, sobald das Gerät gekoppelt ist. Damit erreicht die Seite **Remote** die Agent-Sitzungen eines Rechners
+ohne SSH: über einen Space der Föderation, angemeldet mit dem Geräteschlüssel und einem Grant des Koordinators,
+wie bei „Space öffnen“. Auf dem Rechner läuft dafür pi-serverd mit `PI_SERVERD_REMOTE_SPACE=local` als Member der
+Föderation. Seine Sitzungen liegen dann im Space `remote` seines eigenen Speichers.
+
+| Feld | Bedeutung |
+|---|---|
+| Host-ID des Agent-Hosts | Die Kennung des Rechners in der Föderation. Der Geräteschlüssel wird für diesen Host freigegeben. |
+| Endpunkt des Agent-Hosts | `tcp://ADRESSE:PORT` seines Gates, im WLAN seine LAN-Adresse. |
+| Space der Sitzungen | Der Space, über den die Aufrufe laufen, meist `remote`. Nur das Handy und der Agent-Host haben dort Zugang. |
+
+Nach **Speichern** steht der Rechner auf der Seite **Remote** in der Host-Auswahl als „<Host-ID> (über Space)“.
+Wählt man ihn und tippt **connect**, verbindet sich die Seite über den Space statt über SSH. Sitzungen, Modelle,
+Prompts, Abbrechen und Verlauf funktionieren wie bisher. Es wird nichts installiert oder gestartet; der Rechner
+muss bereits laufen. Der SSH-Weg über die Hosts unter „Clients“ bleibt daneben bestehen.
 
 ## Gekoppelt: was man tun kann
 
