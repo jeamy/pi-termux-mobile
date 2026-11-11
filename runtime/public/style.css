@@ -315,3 +315,33 @@ dialog select, dialog input {
   font-size: 13px; line-height: 1.5;
 }
 .danger-btn { background: var(--danger); color: #fff; }
+
+/* ── Spaces page ─────────────────────────────────────────────────────────── */
+.sp { padding-top: 8px; }
+.sp [hidden] { display: none !important; }
+.sp-form label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.sp-form input, .sp-form textarea {
+  display: block; width: 100%; box-sizing: border-box; margin-top: 4px;
+  background: var(--surf2); color: var(--text); border: 1px solid var(--border); border-radius: var(--rad-sm);
+  padding: 11px 12px; font-size: 16px; font-family: inherit;
+}
+.sp-form input:focus, .sp-form textarea:focus { outline: none; border-color: var(--primary); }
+.sp-form textarea { resize: vertical; min-height: 84px; font-family: ui-monospace, monospace; font-size: 14px; }
+.sp-wide { display: block; width: 100%; margin-top: 12px; padding: 13px; font-size: 15px; border-radius: var(--rad); }
+.sp-hint { font-size: 12px; color: var(--muted); margin: 4px 0; line-height: 1.45; }
+.sp-hint code { color: var(--text); }
+.sp-status .card-row { gap: 12px; }
+.sp-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 13px; }
+.sp-facts:empty { display: none; }
+.sp-facts dt { color: var(--muted); }
+.sp-facts dd { margin: 0; overflow-wrap: anywhere; }
+.sp-msg { margin: 0 10px 8px; padding: 10px 14px; border-radius: var(--rad); background: var(--surf2); font-size: 14px; }
+.sp-ok { color: var(--success); }
+.sp-err { color: #fff; background: var(--danger-bg); border: 1px solid var(--danger); }
+.sp-link { display: block; text-align: center; margin-top: 14px; padding: 10px; color: var(--primary); text-decoration: none; font-size: 15px; }
+.sp-objects { list-style: none; margin: 10px 0 0; padding: 0; }
+.sp-objects li { padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
+.sp-objects li b { display: block; color: var(--primary); font-size: 13px; margin-bottom: 2px; }
+.sp-objects li span { color: var(--muted); }
+.sp-more summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 0; }
+.sp-raw { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; margin: 8px 0 0; color: var(--muted); }

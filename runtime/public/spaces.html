@@ -1,16 +1,56 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>pi mobile — Spaces</title><link rel="stylesheet" href="style.css"></head>
-<body data-page="spaces"><header><div id="menubar"></div></header><main id="keys-page">
-<div class="section-hdr">Gerät koppeln</div><form id="prepare" class="card">
-<label>Eigene NetBird Peer-ID<input name="peerId" required autocomplete="off"></label>
-<label>Vertrauenswürdige Control Host-ID<input name="controlHostId" required autocomplete="off"></label>
-<label>Control-Endpunkt<input name="endpoint" placeholder="tcp://100.x.x.x:PORT" required autocomplete="off"></label>
-<button type="submit">Geräteschlüssel im Android Keystore anlegen</button></form>
-<form id="pair" class="card"><label>Enrollment-QR-Inhalt oder Token<textarea id="enroll-token" rows="3" autocomplete="off" spellcheck="false"></textarea></label><button type="submit">Koppeln</button></form>
-<div class="card"><button data-action="enrollStatus">Kopplungsstatus prüfen</button><button data-action="authenticate">Schlüsselbeweis prüfen</button><button data-action="rotate">Schlüssel rotieren</button><button data-action="rotationStatus">Rotation auswerten</button></div>
-<div class="section-hdr">Space verbinden</div><form id="data" class="card">
-<label>Vertrauenswürdige Data Host-ID<input name="hostId" required autocomplete="off"></label><label>Data-Endpunkt<input name="endpoint" placeholder="tcp://100.x.x.x:PORT" required autocomplete="off"></label><label>Space-ID oder Alias<input name="space" required autocomplete="off"></label><button type="submit">Host und Space speichern</button></form>
-<div class="card"><button data-action="objects">Space und Objekte anzeigen</button></div>
-<div class="card"><a href="steuerung.html">Läufe, Worker und Vorgänge steuern</a></div>
-<p id="space-message" role="status" class="key-empty"></p><pre id="space-result" style="white-space:pre-wrap;overflow-wrap:anywhere;padding:12px"></pre>
+<body data-page="spaces"><header><div id="menubar"></div></header><main id="spaces-page" class="sp">
+
+<section class="card sp-status" aria-live="polite">
+  <div class="card-row"><span id="st-dot" class="dot dot-dim"></span><div><div id="st-title" class="card-title">Status wird gelesen …</div><div id="st-sub" class="card-sub"></div></div></div>
+  <dl id="st-facts" class="sp-facts"></dl>
+</section>
+
+<p id="space-message" role="status" class="sp-msg" hidden></p>
+
+<div class="section-hdr" data-step="prepare">1 · Gerät vorbereiten</div>
+<form id="prepare" class="card sp-form" data-step="prepare">
+  <p class="sp-hint">Der Koordinator zeigt diese Werte beim Hinzufügen eines Geräts an. Im WLAN ist der Endpunkt seine LAN-Adresse, z. B. <code>tcp://192.168.8.28:4100</code>.</p>
+  <label>Name dieses Geräts (Peer-ID)<input name="peerId" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="z. B. handy"></label>
+  <label>Host-ID des Koordinators<input name="controlHostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <label>Endpunkt des Koordinators<input name="endpoint" inputmode="url" placeholder="tcp://192.168.8.28:PORT" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <button type="submit" class="btn-primary sp-wide">Geräteschlüssel anlegen</button>
+  <p class="sp-hint">Der Schlüssel entsteht im Android Keystore und verlässt das Gerät nie.</p>
+</form>
+
+<div class="section-hdr" data-step="pair">2 · Koppeln</div>
+<form id="pair" class="card sp-form" data-step="pair">
+  <label>Kopplungscode oder QR-Inhalt<textarea id="enroll-token" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token oder {&quot;v&quot;:1,…} einfügen"></textarea></label>
+  <button type="submit" class="btn-primary sp-wide">Koppeln</button>
+  <button type="button" data-action="enrollStatus" class="sp-wide">Stand der Kopplung prüfen</button>
+</form>
+
+<div class="section-hdr" data-step="data">3 · Space verbinden</div>
+<form id="data" class="card sp-form" data-step="data">
+  <label>Host-ID des Daten-Hosts<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <label>Endpunkt des Daten-Hosts<input name="endpoint" inputmode="url" placeholder="tcp://192.168.8.28:PORT" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <label>Space (ID oder Alias)<input name="space" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <button type="submit" class="sp-wide">Speichern</button>
+</form>
+
+<div class="card sp-actions" data-step="paired">
+  <button type="button" data-action="objects" class="btn-primary sp-wide">Space öffnen</button>
+  <a class="sp-link" href="steuerung.html">Läufe, Worker und Vorgänge steuern ›</a>
+</div>
+
+<section id="sp-space" class="card" hidden>
+  <div class="card-title" id="sp-space-title"></div>
+  <div class="card-sub" id="sp-space-sub"></div>
+  <ul id="sp-objects" class="sp-objects"></ul>
+</section>
+
+<details class="card sp-more" data-step="paired">
+  <summary>Erweitert</summary>
+  <button type="button" data-action="authenticate" class="sp-wide">Schlüsselbeweis prüfen</button>
+  <button type="button" data-action="rotate" class="sp-wide">Schlüssel erneuern</button>
+  <button type="button" data-action="rotationStatus" class="sp-wide">Erneuerung auswerten</button>
+</details>
+
+<details class="card sp-more" id="sp-raw-box" hidden><summary>Antwort im Rohformat</summary><pre id="space-result" class="sp-raw"></pre></details>
 </main><script type="module" src="spaces.js"></script></body></html>
