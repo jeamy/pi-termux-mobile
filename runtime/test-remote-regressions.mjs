@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { attachRemote } from './remote-client.mjs';
+import { createRemoteState } from './remote-state.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 function fixture(mode = 'proxy') {
@@ -196,4 +197,24 @@ test('the conversation socket reaches only the calls, never the daemon\'s Spaces
   const spaces = (await link.space.spaces()).map((s) => s.alias);
   assert.deepEqual(spaces, ['default'], 'a store of its own, with nothing of the daemon\'s');
   assert.equal(existsSync(`${f.dir}/.pi-serverd/space.sock`), false, 'no space RPC socket without a configured peer');
+});
+
+test('after the daemon restarts, the bridge reconnects on its own and re-attaches the session', { timeout: 120_000 }, async (t) => {
+  const f = fixture();
+  const opts = await daemon(f.dir, t);
+  const state = createRemoteState({ stateDir: f.dir, assertTrusted: async () => {}, ensure: async () => ({ started: false }),
+    attach: ({ signal }) => attachRemote({ ...f, ...opts, signal, requestTimeoutMs: 5_000 }), wait: (ms, v, o) => sleep(Math.min(ms, 200), v, o) });
+  t.after(async () => { await state.disconnect(); f.cleanup(); });
+  const remote = await state.connect('test@host');
+  const { id } = await remote.create({ name: 'survives' });
+  await remote.attach(id);
+  state.sessionId = id; // as server.mjs does on attach
+  process.kill(JSON.parse(readFileSync(`${f.dir}/.pi-serverd/serverd.lock`, 'utf8')).pid, 'SIGKILL');
+  await assert.rejects(remote.request('state'));
+  assert.equal(state.status, 'reconnecting');
+  await daemon(f.dir, t); // the same home: the sessions are in its harness, the calls store is new
+  for (let i = 0; i < 300 && state.status !== 'connected'; i++) await sleep(100);
+  assert.equal(state.status, 'connected', state.lastError);
+  assert.equal(typeof (await state.require().request('state')).busy, 'boolean', 'the session is attached again');
+  assert.ok((await state.require().list()).sessions.some((s) => String(s.id) === id));
 });

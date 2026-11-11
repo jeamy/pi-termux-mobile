@@ -227,6 +227,8 @@ async function sessionsMember(member, args, c) {
 const handleCall = ({ service, session, member, args }) => service === 'sessions'
   ? sessionsMember(member, args, agentContext(ctx)) : chatMember(session, member, args, agentContext(ctx));
 const onCallError = (e) => console.error('remote calls:', e?.message || e);
+// A long poll of `events` holds a worker for its 25 s: 16 serve that many polling clients at once, one more call waits
+const CALL_WORKERS = 16;
 
 // The conversation socket (SOCK_PATH, what the phone forwards over SSH) serves a store of its own, in memory, that
 // holds nothing but the calls and their answers. Its peer is whoever reached it through SSH: it can write calls and
@@ -236,7 +238,7 @@ const stopCallsReaper = await startService(callsStore, ctx);
 const callsServer = await serveSpace(new SpaceService({ host: callsStore, ctx, hostId: serverId, authorityId: serverId,
   identity: new StaticIdentity({ ssh: { principal: { peerId: 'ssh' }, roles: ['member'] } }) }),
   { listen: { path: SOCK_PATH }, connection: () => ({ peerId: 'ssh' }) });
-const calls = [serveRemoteCalls(new PhiSpaces(callsStore, ctx, Date.now), handleCall, { onError: onCallError })];
+const calls = [serveRemoteCalls(new PhiSpaces(callsStore, ctx, Date.now), handleCall, { workers: CALL_WORKERS, onError: onCallError })];
 
 // Space RPC on the daemon's own store, on a socket of its own: the federation's service, or one configured peer
 // with its explicit roles. SSH access alone grants no space role; without either there is no such socket.
@@ -267,7 +269,7 @@ if (remoteSpec) {
     remoteLink = connectSpace(remoteSpec, process.env.PI_SERVERD_REMOTE_SPACE_NAME ? { space: process.env.PI_SERVERD_REMOTE_SPACE_NAME } : {});
     remoteSpace = remoteLink.space;
   }
-  calls.push(serveRemoteCalls(remoteSpace, handleCall, { onError: onCallError }));
+  calls.push(serveRemoteCalls(remoteSpace, handleCall, { workers: CALL_WORKERS, onError: onCallError }));
   console.log(`pi-serverd: remote calls over ${remoteSpec}`);
 }
 
