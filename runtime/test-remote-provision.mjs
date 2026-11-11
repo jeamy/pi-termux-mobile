@@ -140,3 +140,14 @@ test('sshRun bounds hung commands and handles an early upload pipe failure', asy
     } catch (e) { assert.match(e.code ?? e.message, /EPIPE|ECONNRESET/); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('every sibling module a shipped module imports is shipped too (the daemon dies on start otherwise)', () => {
+  const shipped = new Set(remoteFiles());
+  for (const file of shipped) {
+    if (!file.endsWith('.mjs')) continue;
+    const text = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), file), 'utf8');
+    for (const [, sibling] of text.matchAll(/(?:from|import)\s*\(?\s*['"]\.\/([^'"/]+)['"]/g)) {
+      assert.ok(shipped.has(sibling), `${file} imports ./${sibling}, which REMOTE_FILES leaves out`);
+    }
+  }
+});

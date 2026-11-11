@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { attachRemote, parseSshTarget, sshBaseOptions, withDeadline } from './remote-client.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-export const REMOTE_FILES = ['pi-serverd.mjs', 'common.mjs', 'phi-spaces.mjs', 'package.json', 'package-lock.json'];
+export const REMOTE_FILES = ['pi-serverd.mjs', 'common.mjs', 'remote-calls.mjs', 'phi-spaces.mjs', 'package.json', 'package-lock.json'];
 // Generated CLI examples are optional, not needed by the daemon. Hash and
 // upload the same manifest so a fresh checkout remains deployable.
 export function remoteFiles(root = ROOT) {
