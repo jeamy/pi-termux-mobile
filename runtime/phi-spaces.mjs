@@ -63,7 +63,7 @@ function hrw(value, ids) {
     throw new RoutingConflict("empty HRW set");
   return [...ids].sort((a, b) => {
     const x = hash([value, a]), y = hash([value, b]);
-    return y.localeCompare(x) || a.localeCompare(b);
+    return byCodeUnits(y, x) || byCodeUnits(a, b);
   })[0];
 }
 function placement(r) {
@@ -253,12 +253,12 @@ function writeMember(p, table, entry, now, maxAgeMs = 6e4) {
     if (r.by === "capacity") {
       if (candidates2.some((m2) => !m2.capacity || !Number.isFinite(m2.capacity.free) || m2.capacity.free < 0 || !Number.isSafeInteger(m2.capacity.at) || now - m2.capacity.at > maxAgeMs || m2.capacity.at > now + 2e3))
         throw new CapacityUnavailable("capacity observations stale/missing");
-      const free = candidates2.filter((m2) => m2.capacity.free > 0).sort((a, b) => b.capacity.free - a.capacity.free || a.id.localeCompare(b.id));
+      const free = candidates2.filter((m2) => m2.capacity.free > 0).sort((a, b) => b.capacity.free - a.capacity.free || byCodeUnits(a.id, b.id));
       if (!free.length)
         throw new CapacityUnavailable("no available capacity");
       id3 = free[0].id;
     } else {
-      const capable = candidates2.filter((m2) => m2.capabilities && now - m2.capabilities.at <= maxAgeMs && m2.capabilities.at <= now + 2e3 && m2.capabilities.names.includes(r.capability)).sort((a, b) => a.id.localeCompare(b.id));
+      const capable = candidates2.filter((m2) => m2.capabilities && now - m2.capabilities.at <= maxAgeMs && m2.capabilities.at <= now + 2e3 && m2.capabilities.names.includes(r.capability)).sort((a, b) => byCodeUnits(a.id, b.id));
       if (!capable.length)
         throw new NoCapableMember("no fresh capable member");
       id3 = capable[0].id;
@@ -292,7 +292,7 @@ function searchMembers(p, template2) {
   });
   return [...new Set(targets)].sort();
 }
-var RoutingConflict, MigrationRequired, MemberDrained, NoCapableMember, CapacityUnavailable, copy, name, members, hash, same;
+var RoutingConflict, MigrationRequired, MemberDrained, NoCapableMember, CapacityUnavailable, copy, name, members, hash, byCodeUnits, same;
 var init_routing_semantics = __esm({
   "src/routing-semantics.ts"() {
     "use strict";
@@ -315,6 +315,7 @@ var init_routing_semantics = __esm({
     };
     members = (r) => "member" in r ? [r.member] : r.members;
     hash = (v) => digestJson(v);
+    byCodeUnits = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     same = (a, b) => hash(a) === hash(b);
   }
 });
@@ -5269,7 +5270,7 @@ function sealedIn(e) {
   for (let x = e, n = 0; x && n < 8; x = x.cause, n++) if (x instanceof CommitSealed) return x;
   return null;
 }
-var PROTOCOL_VERSION, METHODS, sleepSignal, POLL_FALLBACK_MS, POLL_GAP_MS, encoded, MUTATING, StaticIdentity, DEFAULT_POLICY, MergeTypeNotExclusive, LONE_SURROGATE, LONE_IN_TEXT, wellFormed, Bad, Denied, fail, changeRequestHash, isObj, str, int, optInt, template, duration2, principalKey, SpaceService, UnsupportedProtocol, sealedReply;
+var PROTOCOL_VERSION, METHODS, sleepSignal, POLL_FALLBACK_MS, POLL_GAP_MS, encoded, MUTATING, StaticIdentity, DEFAULT_POLICY, MergeTypeNotExclusive, LONE_SURROGATE, LONE_IN_TEXT, wellFormed, Bad, Denied, AGENT_ID, fail, changeRequestHash, isObj, str, int, optInt, template, duration2, principalKey, SpaceService, UnsupportedProtocol, sealedReply;
 var init_service = __esm({
   "src/service.ts"() {
     "use strict";
@@ -5329,6 +5330,7 @@ var init_service = __esm({
     };
     Denied = class extends Error {
     };
+    AGENT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
     fail = (code, message, extra = {}) => ({ ok: false, error: { code, message, ...extra } });
     changeRequestHash = (principal, r) => digestJson([principal, r.generation, r.requestId]);
     isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -5411,6 +5413,13 @@ var init_service = __esm({
           if (authorization) {
             id3.roles = authorization.roles;
             if (authorization.principal) id3.principal = authorization.principal;
+          }
+          if (isObj(call.frame) && call.frame.agent !== void 0) {
+            const agent = call.frame.agent;
+            if (typeof agent !== "string" || !AGENT_ID.test(agent)) throw new Bad("frame.agent must be 1 to 128 characters of A-Z a-z 0-9 _ . : -");
+            if (!id3.roles.includes("agentHost") || id3.principal.agentId !== void 0) throw new Denied("only a local agent host may act for an agent");
+            id3.principal = { peerId: id3.principal.peerId, agentId: agent };
+            id3.roles = id3.roles.filter((r) => r !== "agentHost");
           }
           const grant2 = this.allowed(id3, method);
           const frame2 = call.frame;
@@ -5996,6 +6005,7 @@ function validateCreateEnroll(o) {
   checkHash(o.tokenHash);
   if (!ENROLLABLE_ROLES.includes(o.role)) throw new IllegalArgumentError(`createEnroll hands out ${ENROLLABLE_ROLES.join(", ")}; an admin is paired through the bootstrap token`);
   if (!o.allowedPeerId) throw new IllegalArgumentError("a token is bound to the peer id of the device (from the management API)");
+  if (!Array.isArray(o.scope) || o.scope.length === 0 || !o.scope.every((s) => typeof s === "string" && s.length > 0)) throw new IllegalArgumentError('scope names the Spaces the key may use (aliases, or "*")');
 }
 function createEnrollIn(s, now, o) {
   validateCreateEnroll(o);
@@ -7421,7 +7431,7 @@ var NetbirdDirectory = class {
     return this.byIp.get(bare(ip)) ?? null;
   }
 };
-var DEFAULT_GROUP_ROLES = { "space-hosts": ["member"], "space-admin": ["admin"], "space-observer": ["observer"], "space-enroll": ["unpaired"] };
+var DEFAULT_GROUP_ROLES = { "space-hosts": ["member", "host", "router"], "space-admin": ["admin"], "space-observer": ["observer"], "space-enroll": ["unpaired"] };
 var rolesOf = (groups, map2) => [...new Set(groups.flatMap((g) => map2[g] ?? []))].sort();
 var GateIdentity = class {
   authenticate(conn) {
@@ -8282,7 +8292,8 @@ var RemoteSpace = class {
         (async () => {
           const grant2 = this.o.grantProvider && !["challenge", "prove", "enroll", "enrollStatus", "grant"].includes(call.method) ? await this.o.grantProvider(call) : void 0;
           const delegation = this.o.delegationProvider && !["challenge", "prove", "enroll", "enrollStatus", "grant", "keyLookup", "routerLease", "epochNotice", "routingPolicy", "membershipInstruction", "runGateInstruction", "spaceLifecycleInstruction", "workerAssignments", "capabilityHeartbeat", "replicaNotice", "entryDescribe", "entryChanges"].includes(call.method) ? await this.o.delegationProvider(call, grant2) : void 0;
-          const text2 = JSON.stringify(grant2 || delegation ? { ...call, frame: { ...call.frame, ...grant2 ? { grant: grant2 } : {}, ...delegation ? { delegation } : {} } } : call);
+          const agent = this.o.agent !== void 0 && !["challenge", "prove", "enroll", "enrollStatus"].includes(call.method) ? this.o.agent : void 0;
+          const text2 = JSON.stringify(grant2 || delegation || agent !== void 0 ? { ...call, frame: { ...call.frame, ...grant2 ? { grant: grant2 } : {}, ...delegation ? { delegation } : {}, ...agent !== void 0 ? { agent } : {} } } : call);
           const limit = this.frameLimit;
           if (new TextEncoder().encode(text2).length > limit) throw new ResourceExhausted(`a call may take at most ${limit} bytes`);
           return this.t.request(text2);
@@ -11570,12 +11581,1522 @@ var ReplicaNoticeBoard = class {
   }
 };
 
+// src/run-controller.ts
+init_documents();
+init_canonical();
+init_spaces();
+init_core();
+var RunJournal = defineDoc({
+  kind: "phi-spaces.run-controller",
+  version: 1,
+  scope: "session",
+  initial: () => ({ runs: {} })
+});
+var RunBusy = class extends TransactionError {
+};
+var MAX_RUNS = 1024;
+var MAX_MEMBERS = 64;
+var MAX_CONFIG_BYTES = 16 * 1024;
+var MAX_COMMANDS = 256;
+var MAX_ISSUED = 128;
+var ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
+var hashOf = digestJson;
+var refusal = (e) => (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) && !/is under recovery /.test(e.message);
+var sameIdentity = (a, b) => a.authorityId === b.authorityId && a.incarnation === b.incarnation;
+function validate2(spec) {
+  if (!spec || !ID.test(spec.runId) || typeof spec.kind !== "string" || !ID.test(spec.kind)) throw new IllegalArgumentError("a run needs a runId and a kind");
+  if (!Array.isArray(spec.members) || !spec.members.length || spec.members.length > MAX_MEMBERS || new Set(spec.members).size !== spec.members.length || !spec.members.every((m) => typeof m === "string" && ID.test(m))) throw new IllegalArgumentError(`a run needs 1..${MAX_MEMBERS} distinct Members`);
+  if (Buffer.byteLength(canonicalJson(spec.config)) > MAX_CONFIG_BYTES) throw new LimitError("run configuration is too large");
+}
+function issue(r, p) {
+  r.issued.push(p.commandId);
+  if (r.issued.length > MAX_ISSUED) r.issued.splice(0, r.issued.length - MAX_ISSUED);
+  return p;
+}
+function viewHash(r, views) {
+  return hashOf({ runId: r.spec.runId, members: r.spec.members, journal: { revision: r.revision, state: r.state }, abandoned: r.recovery?.abandoned ?? null, views: r.spec.members.map((m) => views[m] ?? null) });
+}
+function viewOf(r) {
+  const v = { runId: r.spec.runId, kind: r.spec.kind, members: [...r.spec.members], revision: r.revision, state: r.state };
+  const p = r.pending, q = r.recovery;
+  if (q) v.recovery = { id: q.id, stage: q.stage, ...q.reason ? { reason: q.reason } : {}, ...q.viewHash ? { viewHash: q.viewHash } : {}, ...q.abandoned ? { abandoned: { ...q.abandoned } } : {}, ...q.decision ? { decision: { ...q.decision } } : {}, errors: { ...q.errors }, ...q.changed ? { changed: { ...q.changed } } : {}, ...q.partial ? { partial: [...q.partial] } : {}, views: plain(q.views) };
+  if (p) {
+    const errors = { ...p.errors };
+    v.state = p.kind === "prepare" || p.kind === "release" ? "preparing" : p.kind === "pause" ? Object.keys(errors).length ? "pauseIncomplete" : "pausing" : p.kind === "resume" ? "resuming" : "stopping";
+    v.pending = {
+      commandId: p.commandId,
+      kind: p.kind,
+      revision: p.revision,
+      errors,
+      applied: r.spec.members.filter((m) => p.acks[m]?.phase === "applied"),
+      fenced: r.spec.members.filter((m) => p.acks[m]?.phase === "fenced"),
+      missing: r.spec.members.filter((m) => !p.acks[m]),
+      ...p.refused?.length ? { refused: [...p.refused] } : {}
+    };
+  }
+  if (q) v.state = q.stage === "review" || q.stage === "required" ? "needsReview" : "reconciling";
+  return v;
+}
+var RunController = class {
+  o;
+  /** `identity`: the current control authority and incarnation; pending transitions of another one are never resent. */
+  constructor(o) {
+    this.o = o;
+  }
+  now() {
+    return (this.o.now ?? Date.now)();
+  }
+  async identity() {
+    return this.o.identity ? plain(await this.o.identity()) : void 0;
+  }
+  commit(f) {
+    return this.o.host.commit(async (tx) => f((await tx.doc(RunJournal)).runs), this.o.ctx);
+  }
+  /** Journals the run, prepares every Member behind a `preparing` gate and releases the gates once all are prepared. */
+  async start(commandId, spec) {
+    validate2(spec);
+    if (!ID.test(commandId)) throw new IllegalArgumentError("invalid command ID");
+    const hash9 = hashOf({ op: "start", spec }), identity = await this.identity();
+    await this.commit((runs) => {
+      const old = Object.hasOwn(runs, spec.runId) ? runs[spec.runId] : void 0;
+      if (old) {
+        if (old.commands[commandId]?.hash === hash9) return;
+        throw new RunGateConflict(`run ${spec.runId} was already started by another command`);
+      }
+      if (Object.keys(runs).length >= MAX_RUNS) throw new ResourceExhausted("run journal is full");
+      runs[spec.runId] = { spec: plain(spec), revision: 0, state: "preparing", at: this.now(), tuples: {}, issued: [], commands: { [commandId]: { hash: hash9, kind: "start", revision: 1 } } };
+      const r = runs[spec.runId];
+      r.pending = issue(r, { commandId, kind: "prepare", revision: 1, acks: {}, errors: {}, ...identity ? { identity } : {} });
+    });
+    return this.advance(spec.runId);
+  }
+  pause(commandId, runId) {
+    return this.transition(commandId, runId, "pause");
+  }
+  resume(commandId, runId) {
+    return this.transition(commandId, runId, "resume");
+  }
+  stop(commandId, runId) {
+    return this.transition(commandId, runId, "stop");
+  }
+  async transition(commandId, runId, kind) {
+    if (!ID.test(commandId)) throw new IllegalArgumentError("invalid command ID");
+    const hash9 = hashOf({ op: kind, runId }), identity = await this.identity();
+    await this.commit((runs) => {
+      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
+      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
+      const old = r.commands[commandId];
+      if (old) {
+        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
+        return;
+      }
+      if (r.recovery) throw new RunBusy(`run ${runId} is under recovery ${r.recovery.id}; resolve it first`);
+      const supersede = kind === "stop" && (r.pending?.kind === "prepare" || r.pending?.kind === "release") || !!r.pending?.refused?.length;
+      if (r.pending && !supersede) throw new RunBusy(`run ${runId} is still applying ${r.pending.kind} at revision ${r.pending.revision}`);
+      const from = { pause: ["running"], resume: ["paused"], stop: ["preparing", "running", "paused"] }[kind];
+      if (!from.includes(r.state)) throw new RunGateConflict(`cannot ${kind} run ${runId} while it is ${r.state}`);
+      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
+      r.pending = issue(r, { commandId, kind, revision: (r.pending?.revision ?? r.revision) + 1, acks: {}, errors: {}, ...identity ? { identity } : {} });
+      r.commands[commandId] = { hash: hash9, kind, revision: r.pending.revision };
+    });
+    return this.advance(runId);
+  }
+  /**
+   * Starts the reconciliation of a run after a Control or Data restore (§6 Abgleich nach Restore). A pending
+   * transition is parked as evidence and never resent. Every Member installs the recovery entry fence and reports
+   * its view. Identical stable paused/stopped views of known origin are confirmed with fresh ACKs; anything else
+   * waits for `resolve`. `manifest` rebuilds a run the restored journal no longer knows.
+   */
+  async reconcile(commandId, runId, recoveryId, manifest) {
+    if (!ID.test(commandId) || !ID.test(recoveryId)) throw new IllegalArgumentError("invalid command or recovery ID");
+    if (manifest) validate2({ runId, kind: manifest.kind, config: null, members: manifest.members });
+    const hash9 = hashOf({ op: "reconcile", runId, recoveryId, manifest: manifest ?? null }), identity = await this.identity();
+    await this.commit((runs) => {
+      let r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
+      if (r?.commands[commandId]) {
+        if (r.commands[commandId].hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
+        return;
+      }
+      if (!r) {
+        if (!manifest) throw new IllegalArgumentError(`run ${runId} is not in this journal; name its kind and Members`);
+        if (Object.keys(runs).length >= MAX_RUNS) throw new ResourceExhausted("run journal is full");
+        runs[runId] = { spec: { runId, kind: manifest.kind, config: null, members: [...manifest.members] }, revision: 0, state: "preparing", at: this.now(), tuples: {}, issued: [], commands: {} };
+        r = runs[runId];
+      } else if (manifest && canonicalJson([manifest.kind, manifest.members]) !== canonicalJson([r.spec.kind, r.spec.members])) throw new RunGateConflict("the manifest differs from the journal; review the journal first");
+      if (r.recovery?.id === recoveryId) {
+        r.commands[commandId] = { hash: hash9, kind: "reconcile", revision: r.revision };
+        return;
+      }
+      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
+      const abandoned = r.pending ? { commandId: r.pending.commandId, kind: r.pending.kind, revision: r.pending.revision } : r.recovery?.abandoned;
+      delete r.pending;
+      r.recovery = { id: recoveryId, commandId, stage: "gathering", views: {}, errors: {}, ...identity ? { identity } : {}, ...abandoned ? { abandoned } : {} };
+      r.commands[commandId] = { hash: hash9, kind: "reconcile", revision: r.revision };
+    });
+    return this.advance(runId);
+  }
+  /**
+   * The admin decision after `needsReview` (resolveRunRecovery). It is bound to the reviewed views by their hash;
+   * every Member step compares and sets the reviewed gate state. `resume` first completes a pause barrier and is
+   * refused if any evidence shows the run stopped.
+   */
+  async resolve(commandId, runId, o) {
+    if (!ID.test(commandId) || !["pause", "stop", "resume"].includes(o?.decision) || typeof o.expectedViewHash !== "string") throw new IllegalArgumentError("invalid recovery decision");
+    const hash9 = hashOf({ op: "resolve", runId, ...o }), identity = await this.identity();
+    await this.commit((runs) => {
+      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
+      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
+      if (r.commands[commandId]) {
+        if (r.commands[commandId].hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
+        return;
+      }
+      const q = r.recovery;
+      if (!q || q.stage !== "review") throw new RunGateConflict(`run ${runId} has no recovery waiting for a decision`);
+      if (q.viewHash !== o.expectedViewHash) throw new RunGateConflict("the recovery views changed; review again");
+      const views = r.spec.members.map((m) => q.views[m]);
+      if (o.decision === "resume" && (r.state === "stopped" || views.some((v) => v.stopped))) throw new RunGateConflict("a stopped run is never resumed");
+      if (o.decision !== "stop" && views.some((v) => !v.present || v.gate.state === "preparing")) throw new RunGateConflict("Members without a prepared gate allow only stop");
+      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
+      const revision2 = Math.max(r.revision, q.abandoned?.revision ?? 0, ...views.map((v) => v.maxRevision)) + 1;
+      r.pending = issue(r, { commandId, kind: o.decision === "stop" ? "stop" : "pause", revision: revision2, acks: {}, errors: {}, recoveryId: q.id, expect: Object.fromEntries(views.filter((v) => v.present).map((v) => [v.spaceId, { revision: v.gate.revision, state: v.gate.state }])), ...o.decision === "resume" ? { then: "resume" } : {}, ...identity ? { identity } : {} });
+      q.stage = "deciding";
+      q.decision = { commandId, decision: o.decision, viewHash: o.expectedViewHash, auto: false };
+      r.commands[commandId] = { hash: hash9, kind: "resolve", revision: revision2 };
+    });
+    return this.advance(runId);
+  }
+  async gather(r) {
+    const q = r.recovery, runId = r.spec.runId;
+    for (const spaceId of r.spec.members) {
+      if (q.views[spaceId]?.stable) continue;
+      let view3, error;
+      try {
+        view3 = await this.o.member(spaceId).recover(runId, q.id);
+        if (view3.runId !== runId || view3.recoveryId !== q.id || view3.spaceId !== null && view3.spaceId !== spaceId) throw new TransactionError("recovery view does not match the request");
+      } catch (e) {
+        view3 = void 0;
+        error = String(e?.message ?? e).slice(0, 256);
+      }
+      await this.commit((runs) => {
+        const cur = runs[runId].recovery;
+        if (!cur || cur.id !== q.id || cur.stage !== "gathering") return;
+        if (view3) {
+          cur.views[spaceId] = plain(view3);
+          delete cur.errors[spaceId];
+        } else cur.errors[spaceId] = error;
+      });
+    }
+    return this.commit((runs) => {
+      const cur = runs[runId], q2 = cur.recovery;
+      if (!q2 || q2.stage !== "gathering") return "again";
+      if (!cur.spec.members.every((m) => q2.views[m]?.stable)) return "wait";
+      const views = cur.spec.members.map((m) => q2.views[m]);
+      cur.tuples = Object.fromEntries(views.map((v) => [v.spaceId ?? "", { incarnation: v.incarnation, authorityId: v.authorityId }]));
+      const states = new Set(views.map((v) => v.gate?.state ?? "missing"));
+      const state = [...states][0];
+      const clean = views.every((v) => v.present && !v.fence && (!v.restored || !v.restored.fence && v.restored.state === v.gate.state && v.restored.revision === v.gate.revision));
+      const known = views.every((v) => cur.issued.includes(v.gate?.commandId ?? "") || (cur.resolved ?? []).some((x) => v.gate?.commandId === x.id));
+      const stopped = cur.state === "stopped" || views.some((v) => v.stopped);
+      if (clean && known && !q2.abandoned && states.size === 1 && (state === "stopped" || state === "paused" && !stopped)) {
+        const revision2 = Math.max(cur.revision, ...views.map((v) => v.maxRevision)) + 1, commandId = `${q2.id}:confirm`;
+        cur.pending = issue(cur, { commandId, kind: state === "paused" ? "pause" : "stop", revision: revision2, acks: {}, errors: {}, recoveryId: q2.id, expect: Object.fromEntries(views.map((v) => [v.spaceId, { revision: v.gate.revision, state: v.gate.state }])), ...q2.identity ? { identity: q2.identity } : {} });
+        q2.stage = "deciding";
+        q2.decision = { commandId, decision: state === "paused" ? "pause" : "stop", viewHash: null, auto: true };
+        return "again";
+      }
+      q2.stage = "review";
+      q2.viewHash = viewHash(cur, q2.views);
+      return "wait";
+    });
+  }
+  /**
+   * Sends the pending command to every Member that has not applied it and records the answers. Safe to repeat at
+   * any time, also after a restart. Fenced Members finish their bound transactions first; call again later.
+   * A transition issued under another control authority or incarnation is never resent, and a Member under a restore
+   * recovery takes no ordinary command: both start `reconcile` automatically (fence and gather only; decisions stay
+   * with `resolve` unless the views are unambiguous).
+   */
+  async advance(runId) {
+    for (; ; ) {
+      const r = await this.commit((runs) => plain(Object.hasOwn(runs, runId) ? runs[runId] : void 0));
+      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
+      const identity = await this.identity();
+      const issuedUnder = r.pending?.identity ?? r.recovery?.identity;
+      if (identity && issuedUnder && !sameIdentity(identity, issuedUnder)) {
+        const id3 = ("control-" + String(identity.incarnation ?? "unknown")).replace(/[^a-zA-Z0-9._:-]/g, "-").slice(0, 90);
+        return this.reconcile(`auto-${id3}`, runId, id3);
+      }
+      if (r.recovery?.stage === "required" || r.recovery?.stage === "review") return viewOf(r);
+      if (r.recovery?.stage === "gathering") {
+        if (await this.gather(r) === "again") continue;
+        return await this.status(runId);
+      }
+      const p = r.pending;
+      if (!p) {
+        if ((r.schedules ?? []).some((x) => x.at <= this.now())) {
+          await this.dueSchedules(runId);
+          return await this.status(runId);
+        }
+        return viewOf(r);
+      }
+      for (const spaceId of r.spec.members) {
+        if (p.acks[spaceId]?.phase === "applied" || p.refused?.includes(spaceId)) continue;
+        const command = { runId, commandId: p.commandId, kind: p.kind, revision: p.revision, ...p.recoveryId ? { recoveryId: p.recoveryId } : {}, ...p.expect?.[spaceId] ? { expect: p.expect[spaceId] } : {} };
+        let ack, error, refused = false;
+        try {
+          const member = this.o.member(spaceId);
+          ack = p.kind === "prepare" ? await member.prepare(r.spec, command) : await member.gate(command);
+          if (ack.spaceId !== spaceId || ack.runId !== runId || ack.revision !== p.revision || ack.commandId !== p.commandId || ack.kind !== p.kind) throw new TransactionError("ACK does not match the command");
+        } catch (e) {
+          ack = void 0;
+          error = String(e?.message ?? e).slice(0, 256);
+          refused = refusal(e) && e.message !== "ACK does not match the command";
+        }
+        await this.commit((runs) => {
+          const cur = runs[runId], q = cur.pending;
+          if (!q || q.commandId !== p.commandId) return;
+          if (ack) {
+            const tuple = cur.tuples[spaceId];
+            if (tuple && (tuple.incarnation !== ack.incarnation || tuple.authorityId !== ack.authorityId)) {
+              q.errors[spaceId] = "Member incarnation or authority changed; recovery review required";
+              return;
+            }
+            cur.tuples[spaceId] ??= { incarnation: ack.incarnation, authorityId: ack.authorityId };
+            q.acks[spaceId] = plain(ack);
+            delete q.errors[spaceId];
+          } else if (q.recoveryId && /review again|belongs to another command|under recovery/.test(error) && cur.recovery?.id === q.recoveryId) {
+            cur.recovery.partial = cur.spec.members.filter((m) => q.acks[m]?.phase === "applied");
+            cur.recovery.changed = { ...cur.recovery.changed ?? {}, [spaceId]: error };
+            cur.recovery.stage = "gathering";
+            cur.recovery.views = {};
+            delete cur.recovery.viewHash;
+            delete cur.recovery.decision;
+            delete cur.pending;
+          } else {
+            q.errors[spaceId] = error;
+            if (refused && !q.refused?.includes(spaceId)) (q.refused ??= []).push(spaceId);
+          }
+        });
+        if (!await this.commit((runs) => runs[runId].pending?.commandId === p.commandId)) break;
+      }
+      const fenced = !p.recoveryId && (await this.commit((runs) => Object.values(runs[runId].pending?.errors ?? {}))).map((e) => /is under recovery ([a-zA-Z0-9._:-]+);/.exec(e)?.[1]).find(Boolean);
+      if (fenced) return this.reconcile(`auto-${fenced}`.slice(0, 96), runId, fenced);
+      const next = await this.commit((runs) => {
+        const cur = runs[runId], q = cur.pending;
+        if (!q || q.commandId !== p.commandId) return "again";
+        if (!cur.spec.members.every((m) => q.acks[m]?.phase === "applied")) return "wait";
+        const states = new Set(cur.spec.members.map((m) => q.acks[m].state));
+        if (states.size !== 1) {
+          q.errors["*"] = `Members confirmed different states: ${[...states].join(", ")}`;
+          return "wait";
+        }
+        cur.revision = q.revision;
+        cur.state = [...states][0];
+        delete cur.pending;
+        if (q.recoveryId && cur.recovery?.id === q.recoveryId) {
+          cur.resolved ??= [];
+          cur.resolved.push({ id: q.commandId, decision: cur.recovery.decision?.decision ?? (q.kind === "stop" ? "stop" : "pause"), auto: !!cur.recovery.decision?.auto });
+          if (cur.resolved.length > 32) cur.resolved.splice(0, cur.resolved.length - 32);
+          delete cur.recovery;
+        }
+        if (q.kind === "prepare") cur.pending = issue(cur, { commandId: `${q.commandId}:release`, kind: "release", revision: q.revision + 1, acks: {}, errors: {}, ...q.identity ? { identity: q.identity } : {} });
+        if (q.then === "resume") cur.pending = issue(cur, { commandId: `${q.commandId}:resume`, kind: "resume", revision: q.revision + 1, acks: {}, errors: {}, ...q.identity ? { identity: q.identity } : {} });
+        return cur.pending ? "again" : "done";
+      });
+      if (next !== "again") return await this.status(runId);
+    }
+  }
+  async status(runId) {
+    return this.commit((runs) => Object.hasOwn(runs, runId) ? viewOf(runs[runId]) : null);
+  }
+  /**
+   * Plan preview (dry run) of a start or transition: whether it would be accepted now and with which revision.
+   * Nothing is journaled or sent; the real command can still be refused if the state changes meanwhile.
+   */
+  async preview(kind, runId, spec) {
+    try {
+      if (kind === "start") validate2(spec);
+    } catch (e) {
+      return { allowed: false, reason: e.message };
+    }
+    const view3 = await this.status(runId);
+    if (kind === "start") return view3 ? { allowed: false, reason: `run ${runId} exists (${view3.state})`, state: view3.state } : { allowed: true, revision: 1 };
+    if (!view3) return { allowed: false, reason: `unknown run ${runId}` };
+    if (view3.recovery) return { allowed: false, reason: `run is under recovery ${view3.recovery.id}`, state: view3.state };
+    const refused = !!view3.pending?.refused?.length;
+    const supersede = kind === "stop" && (view3.pending?.kind === "prepare" || view3.pending?.kind === "release") || refused;
+    if (view3.pending && !supersede) return { allowed: false, reason: `still applying ${view3.pending.kind} at revision ${view3.pending.revision}`, state: view3.state };
+    const from = { pause: ["running"], resume: ["paused"], stop: ["preparing", "running", "paused"] }[kind];
+    const confirmed = refused ? await this.commit((runs) => runs[runId].state) : view3.pending ? "preparing" : view3.state;
+    if (!from.includes(confirmed)) return { allowed: false, reason: `cannot ${kind} while ${view3.state}`, state: view3.state };
+    return { allowed: true, revision: (view3.pending?.revision ?? view3.revision) + 1, state: view3.state };
+  }
+  /** The newest runs (at most `limit`), for overviews such as the mobile Spaces page. */
+  async list(limit = 50) {
+    return this.commit((runs) => Object.values(runs).sort((a, b) => b.at - a.at).slice(0, Math.max(1, Math.min(limit, 200))).map(viewOf));
+  }
+  /** Runs with work left for the server-side loop: a transition waiting for ACKs or a recovery gathering views. */
+  async pending() {
+    const now = this.now();
+    return this.commit((runs) => Object.values(runs).filter((r) => r.pending && !r.pending.refused?.length || r.recovery?.stage === "gathering" || (r.schedules ?? []).some((x) => x.at <= now)).map((r) => r.spec.runId));
+  }
+  /**
+   * Schedules a pause or resume (e.g. a maintenance window). At its time the server loop issues it as an ordinary
+   * journaled command with the schedule ID as command ID; a schedule that is not applicable then is dropped and
+   * remembered as skipped. `cancel: true` removes it.
+   */
+  async schedule(commandId, runId, o) {
+    if (!ID.test(commandId) || !["pause", "resume"].includes(o?.kind) || !Number.isSafeInteger(o.at)) throw new IllegalArgumentError("a schedule needs a command ID, pause or resume and a time");
+    return this.commit((runs) => {
+      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
+      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
+      r.schedules ??= [];
+      if (o.cancel) r.schedules = r.schedules.filter((x) => x.id !== commandId);
+      else if (!r.schedules.some((x) => x.id === commandId)) {
+        if (r.schedules.length >= 16) throw new ResourceExhausted("at most 16 schedules per run");
+        r.schedules.push({ id: commandId, kind: o.kind, at: o.at });
+        r.schedules.sort((a, b) => a.at - b.at);
+      }
+      return { runId, schedules: plain(r.schedules) };
+    });
+  }
+  /** Issues due schedules (called by the server loop through `advance`). */
+  async dueSchedules(runId) {
+    const now = this.now();
+    const due = await this.commit((runs) => {
+      const r = runs[runId];
+      return r && !r.pending && !r.recovery ? plain((r.schedules ?? []).filter((x) => x.at <= now)) : [];
+    });
+    for (const s of due) {
+      await this.commit((runs) => {
+        const r = runs[runId];
+        r.schedules = (r.schedules ?? []).filter((x) => x.id !== s.id);
+      });
+      try {
+        await this.transition(s.id, runId, s.kind);
+      } catch (e) {
+        if (!(e instanceof IllegalArgumentError || e instanceof TransactionError)) throw e;
+      }
+      return;
+    }
+  }
+  /**
+   * Result export of a run: completeness against the manifest, missing tasks, a manifest hash and a result hash.
+   * A partial result is reported as such; the export never changes the run.
+   */
+  async export(runId) {
+    const view3 = await this.status(runId);
+    if (!view3) throw new IllegalArgumentError(`unknown run ${runId}`);
+    const spec = await this.commit((runs) => plain(runs[runId].spec));
+    const exporter = this.o.exporters?.[spec.kind];
+    if (!exporter || !this.o.space) throw new IllegalArgumentError(`no exporter for run kind ${spec.kind}`);
+    const r = await exporter(spec, this.o.space);
+    return { runId, kind: spec.kind, state: view3.state, manifestHash: hashOf({ runId, kind: spec.kind, config: spec.config, members: spec.members }), ...r, missing: r.missing.slice(0, 50) };
+  }
+};
+function localRunMember(host, ctx, spaceId, prepare, now = Date.now) {
+  const gate = (command) => host.commit(async (tx) => applyRunGate(await spaceDoc(tx, spaceId, now()), now(), command), ctx);
+  return {
+    spaceId,
+    gate,
+    recover: (runId, recoveryId) => host.commit(async (tx) => recoverRunGate(await spaceDoc(tx, spaceId, now()), now(), { runId, recoveryId }), ctx),
+    async prepare(run, command) {
+      const [ack, open3] = await host.commit(async (tx) => {
+        const s = await spaceDoc(tx, spaceId, now()), ack2 = applyRunGate(s, now(), command);
+        return [ack2, runGateView(s, run.runId)?.state === "preparing"];
+      }, ctx);
+      if (open3) await prepare(run, spaceId);
+      return ack;
+    }
+  };
+}
+function runCommands(runs) {
+  const wrap = (f) => async (id3, args) => {
+    try {
+      const v = await f(id3, args);
+      const refused = v?.pending?.refused?.[0];
+      if (refused) return { phase: "failed", error: `${refused}: ${v.pending.errors[refused]}` };
+      return v;
+    } catch (e) {
+      if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
+      throw e;
+    }
+  };
+  const run = (args) => String(args.runId ?? "");
+  const or = (kind, f) => async (id3, a) => a.dryRun === true ? { dryRun: true, ...await runs.preview(kind, run(a), kind === "start" ? { runId: run(a), kind: String(a.kind ?? ""), config: a.config ?? null, members: a.members } : void 0) } : wrap(f)(id3, a);
+  return {
+    startRun: or("start", (id3, a) => runs.start(id3, { runId: run(a), kind: String(a.kind ?? ""), config: a.config ?? null, members: a.members })),
+    pauseRun: or("pause", (id3, a) => runs.pause(id3, run(a))),
+    resumeRun: or("resume", (id3, a) => runs.resume(id3, run(a))),
+    stopRun: or("stop", (id3, a) => runs.stop(id3, run(a))),
+    reconcileRun: wrap((id3, a) => runs.reconcile(id3, run(a), String(a.recoveryId ?? ""), a.members ? { kind: String(a.kind ?? ""), members: a.members } : void 0)),
+    resolveRunRecovery: wrap((id3, a) => runs.resolve(id3, run(a), { expectedViewHash: String(a.expectedViewHash ?? ""), decision: a.decision })),
+    // Read-only views for admins; they change nothing.
+    listRuns: async (_id, a) => await runs.list(Number(a.limit ?? 50)),
+    runStatus: async (_id, a) => await runs.status(run(a)) ?? { phase: "failed", error: `unknown run ${run(a)}` },
+    scheduleRun: wrap(async (id3, a) => await runs.schedule(String(a.scheduleId ?? id3), run(a), { kind: a.kind, at: Number(a.at), cancel: a.cancel === true })),
+    exportRun: wrap(async (_id, a) => await runs.export(run(a)))
+  };
+}
+
+// src/run-member.ts
+init_canonical();
+init_grants();
+init_spaces();
+init_core();
+function runGateRefusal(e) {
+  const message = e instanceof Error ? e.message : String(e);
+  const code = e instanceof PermissionError ? "PermissionDenied" : e instanceof LimitError ? "ResourceExhausted" : e instanceof CompletionViolation ? "CompletionViolation" : e instanceof TransactionError ? "TransactionError" : e instanceof UniqueConflict ? "UniqueConflict" : e instanceof IllegalArgumentError || e instanceof TypeError ? "BadRequest" : "PermissionDenied";
+  return { code, message };
+}
+var RECOVER_TTL_MS = 6e4;
+var bytes7 = (kind, v) => Buffer.from(`phi-spaces/run-gate-${kind}/v1
+` + canonicalJson(v));
+async function signRun(kind, value, issuer, signer) {
+  return { value: plain(value), issuer, algorithm: signer.algorithm, signature: await signatureOf(signer, bytes7(kind, value)) };
+}
+function verifyRun(kind, t, pin) {
+  if (!signedBy(t, pin, bytes7(kind, t?.value))) throw new PermissionError(`invalid run gate ${kind} signature`);
+  return plain(t.value);
+}
+var tasksPreparer = (host, ctx, now = Date.now) => async (run, spaceId) => {
+  const tasks = run.config?.tasks;
+  if (!Array.isArray(tasks) || tasks.length > 64) throw new IllegalArgumentError("a tasks run names at most 64 tasks");
+  await host.commit(async (tx) => {
+    const s = await spaceDoc(tx, spaceId, now());
+    for (const t of tasks) {
+      const fields = { ...t.fields, runId: run.runId };
+      if (!count(s, now(), { type: t.type, fields })) write(s, now(), { type: t.type, fields }, null, FOREVER);
+    }
+  }, ctx);
+};
+var RunGateService = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  async apply(t) {
+    const q = verifyRun("instruction", t, this.o.controllerPin);
+    if (q.authorityId !== this.o.authorityId) throw new PermissionError("run gate instruction belongs to another authority");
+    if (typeof q.spaceId !== "string" || !(await listSpaces(this.o.host, this.o.ctx)).some((i) => i.spaceId === q.spaceId)) throw new IllegalArgumentError("run gate instruction names no local Space");
+    if (q.kind === "recover") {
+      if (typeof q.recoveryId !== "string") throw new IllegalArgumentError("recover needs a recovery ID");
+      if (typeof q.expiresAt !== "number" || !(q.expiresAt > (this.o.now ?? Date.now)())) throw new PermissionError("this recovery instruction has expired");
+      await this.o.assertAuthority();
+      const view3 = await localRunMember(this.o.host, this.o.ctx, q.spaceId, async () => {
+      }, this.o.now).recover(q.runId, q.recoveryId);
+      await this.o.assertAuthority();
+      return signRun("ack", view3, this.o.peerId, this.o.signer);
+    }
+    const command = { runId: q.runId, commandId: q.commandId, kind: q.kind, revision: q.revision, ...q.recoveryId !== void 0 ? { recoveryId: q.recoveryId } : {}, ...q.expect !== void 0 ? { expect: q.expect } : {} };
+    let prepare = async () => {
+      throw new IllegalArgumentError("only prepare instructions carry a run");
+    };
+    if (q.kind === "prepare") {
+      const spec = q.spec;
+      if (!spec || spec.runId !== q.runId || !Array.isArray(spec.members) || !spec.members.includes(q.spaceId)) throw new IllegalArgumentError("prepare needs the run's manifest including this Space");
+      const registered = Object.hasOwn(this.o.preparers, spec.kind) ? this.o.preparers[spec.kind] : void 0;
+      if (!registered) throw new IllegalArgumentError(`no registered preparer for run kind ${spec.kind}`);
+      prepare = registered;
+    }
+    await this.o.assertAuthority();
+    const member = localRunMember(this.o.host, this.o.ctx, q.spaceId, prepare, this.o.now);
+    const ack = q.kind === "prepare" ? await member.prepare(q.spec, command) : await member.gate(command);
+    await this.o.assertAuthority();
+    return signRun("ack", ack, this.o.peerId, this.o.signer);
+  }
+};
+function remoteRunMember(o) {
+  const call = async (command, spec) => {
+    const q = { ...command, authorityId: o.authorityId, spaceId: o.spaceId, ...spec ? { spec } : {} };
+    const ack = verifyRun("ack", await o.send(await signRun("instruction", q, o.peerId, o.signer)), o.memberPin);
+    if (ack.spaceId !== o.spaceId) throw new PermissionError("run gate ACK names another Space");
+    return ack;
+  };
+  return {
+    spaceId: o.spaceId,
+    prepare: (run, command) => call(command, run),
+    gate: (command) => call(command),
+    recover: (runId, recoveryId) => call({ runId, commandId: recoveryId, kind: "recover", revision: 0, recoveryId, expiresAt: (o.now ?? Date.now)() + RECOVER_TTL_MS })
+  };
+}
+
+// src/workers.ts
+init_documents();
+init_canonical();
+init_client();
+init_grants();
+init_spaces();
+init_core();
+var ID2 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
+var MAX_COUNT = 64;
+var MAX_PER_HOST = 32;
+var MAX_ASSIGNMENTS = 1024;
+var MAX_COMMANDS2 = 1024;
+var bytes8 = (v) => Buffer.from("phi-spaces/worker-assignments/v1\n" + canonicalJson(v));
+var hashOf2 = digestJson;
+function verifyWorkers(t, pin) {
+  if (!signedBy(t, pin, bytes8(t?.value))) throw new PermissionError("invalid worker assignment signature");
+  return plain(t.value);
+}
+var WorkerJournal = defineDoc({
+  kind: "phi-spaces.worker-assignments",
+  version: 1,
+  scope: "session",
+  initial: () => ({ generation: 0, assignments: {}, commands: {} })
+});
+var WorkerAssignments = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  /** count 0 stops every worker of the assignment after its current task; the assignment stays as the stop instruction. */
+  async set(commandId, a) {
+    if (!ID2.test(commandId) || !a || ![a.assignmentId, a.hostId, a.kind, a.targetSpace].every((v) => typeof v === "string" && ID2.test(v)) || a.runId !== void 0 && !ID2.test(a.runId) || !Number.isSafeInteger(a.count) || a.count < 0 || a.count > MAX_COUNT) throw new IllegalArgumentError(`a worker assignment needs IDs, a kind, a target Space and a count 0..${MAX_COUNT}`);
+    const input = { assignmentId: a.assignmentId, hostId: a.hostId, kind: a.kind, targetSpace: a.targetSpace, count: a.count, ...a.runId !== void 0 ? { runId: a.runId } : {} };
+    const hash9 = hashOf2(input);
+    return this.o.host.commit(async (tx) => {
+      const d = await tx.doc(WorkerJournal);
+      const old = d.commands[commandId];
+      if (old) {
+        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another worker assignment");
+        return plain(d.assignments[a.assignmentId] ?? { ...input, generation: old.generation });
+      }
+      const prior = d.assignments[a.assignmentId];
+      if (prior && prior.hostId !== a.hostId) throw new RunGateConflict("an assignment keeps its host; stop it and create another");
+      if (!prior && (Object.keys(d.assignments).length >= MAX_ASSIGNMENTS || Object.values(d.assignments).filter((x) => x.hostId === a.hostId).length >= MAX_PER_HOST)) throw new ResourceExhausted("worker assignment directory is full");
+      if (Object.keys(d.commands).length >= MAX_COMMANDS2) throw new ResourceExhausted("worker command history is full");
+      d.generation++;
+      d.assignments[a.assignmentId] = { ...input, generation: d.generation };
+      d.commands[commandId] = { hash: hash9, generation: d.generation };
+      return plain(d.assignments[a.assignmentId]);
+    }, this.o.ctx);
+  }
+  /** The signed list of one host. `hostId` must come from the authenticated connection, never from the request. */
+  async forHost(hostId) {
+    const d = await this.o.host.snapshot(WorkerJournal, this.o.ctx);
+    const incarnation = this.o.identity ? (await this.o.identity()).incarnation : null;
+    const value = { authorityId: this.o.authorityId, incarnation, hostId, generation: d?.generation ?? 0, assignments: Object.values(d?.assignments ?? {}).filter((a) => a.hostId === hostId).sort((x, y) => x.assignmentId < y.assignmentId ? -1 : x.assignmentId > y.assignmentId ? 1 : 0) };
+    return { value, issuer: this.o.peerId, algorithm: this.o.signer.algorithm, signature: Buffer.from(await this.o.signer.sign(bytes8(value))).toString("base64") };
+  }
+  async list() {
+    const d = await this.o.host.snapshot(WorkerJournal, this.o.ctx);
+    return { generation: d?.generation ?? 0, assignments: Object.values(d?.assignments ?? {}).map((a) => plain(a)) };
+  }
+};
+function appliedWorkers(control2, now) {
+  const out = {};
+  for (const e of list(control2, now, { type: "Capability" })) {
+    const f = e.fields, w = f.metrics?.workers;
+    if (typeof f.hostId === "string" && w && typeof w === "object" && (!out[f.hostId] || out[f.hostId].at < Number(f.at))) out[f.hostId] = { at: Number(f.at), workers: plain(w) };
+  }
+  return out;
+}
+var WorkerState = defineDoc({
+  kind: "phi-spaces.worker-supervisor",
+  version: 1,
+  scope: "session",
+  initial: () => ({ authorityId: null, incarnation: null, generation: 0, assignments: [] })
+});
+var abortableSleep = (ms2, signal) => new Promise((resolve2) => {
+  if (signal.aborted) return resolve2();
+  const t = setTimeout(done, ms2);
+  function done() {
+    clearTimeout(t);
+    signal.removeEventListener("abort", done);
+    resolve2();
+  }
+  signal.addEventListener("abort", done, { once: true });
+});
+var WorkerSupervisor = class {
+  o;
+  running = /* @__PURE__ */ new Map();
+  rejected = /* @__PURE__ */ new Map();
+  blocked;
+  fetchError;
+  constructor(o) {
+    this.o = o;
+  }
+  now() {
+    return (this.o.now ?? Date.now)();
+  }
+  /** One pass: fetch and verify the host's list, persist an acceptable one, then scale the loops to it. */
+  async reconcile() {
+    let list2;
+    try {
+      list2 = verifyWorkers(await this.o.fetch(), this.o.controllerPin);
+      if (list2.hostId !== this.o.hostId || list2.authorityId !== this.o.authorityId) throw new PermissionError("worker list belongs to another host or authority");
+      if (!Array.isArray(list2.assignments) || list2.assignments.some((a) => a.hostId !== this.o.hostId)) throw new PermissionError("worker list contains another host's assignment");
+      this.fetchError = void 0;
+    } catch (e) {
+      list2 = void 0;
+      this.fetchError = String(e?.message ?? e).slice(0, 256);
+    }
+    const accepted = await this.o.host.commit(async (tx) => {
+      const d = await tx.doc(WorkerState);
+      if (list2) {
+        const known = d.generation > 0;
+        if (known && (d.authorityId !== list2.authorityId || d.incarnation !== list2.incarnation)) this.blocked = `control identity changed (${d.incarnation} -> ${list2.incarnation}); accept it explicitly with acceptControlIdentity`;
+        else {
+          this.blocked = void 0;
+          if (!known || list2.generation > d.generation) {
+            d.authorityId = list2.authorityId;
+            d.incarnation = list2.incarnation;
+            d.generation = list2.generation;
+            d.assignments = plain(list2.assignments);
+          }
+        }
+      }
+      return plain(d);
+    }, this.o.ctx);
+    await this.apply(accepted.assignments);
+    return this.summary(accepted);
+  }
+  /** After a verified Control restore: the next list of this identity is accepted although its generation restarted. */
+  async acceptControlIdentity(incarnation) {
+    await this.o.host.commit(async (tx) => {
+      const d = await tx.doc(WorkerState);
+      d.incarnation = incarnation;
+      d.generation = 0;
+    }, this.o.ctx);
+    this.blocked = void 0;
+  }
+  async apply(specs) {
+    const local = new Set((await listSpaces(this.o.host, this.o.ctx)).map((i) => i.spaceId));
+    const wanted = new Map(specs.map((s) => [s.assignmentId, s]));
+    this.rejected.clear();
+    for (const [id3, r] of this.running) {
+      if (!wanted.has(id3)) {
+        r.spec = { ...r.spec, count: 0 };
+        this.scale(r, 0);
+      }
+      if (!wanted.has(id3) && !r.loops.length && !r.stopping.length) this.running.delete(id3);
+    }
+    for (const spec of specs) {
+      const kind = Object.hasOwn(this.o.kinds, spec.kind) ? this.o.kinds[spec.kind] : void 0;
+      const reason = !kind ? `no registered worker kind ${spec.kind}` : !local.has(spec.targetSpace) ? `target Space ${spec.targetSpace} is not on this host` : kind.requiresRun && !spec.runId ? `worker kind ${spec.kind} needs a runId` : void 0;
+      let r = this.running.get(spec.assignmentId);
+      if (reason) {
+        this.rejected.set(spec.assignmentId, reason);
+        if (r) this.scale(r, 0);
+        continue;
+      }
+      const old = r;
+      if (r && (r.spec.kind !== spec.kind || r.spec.targetSpace !== spec.targetSpace || r.spec.runId !== spec.runId)) {
+        this.scale(r, 0);
+        r = void 0;
+      }
+      if (!r) {
+        r = { spec, loops: [], stopping: old?.stopping ?? [], tasks: 0, errors: 0 };
+        this.running.set(spec.assignmentId, r);
+      }
+      r.spec = spec;
+      this.scale(r, spec.count);
+    }
+  }
+  scale(r, count2) {
+    while (r.loops.length > count2) {
+      const l = r.loops.pop(), list2 = r.stopping;
+      l.ctrl.abort();
+      list2.push(l);
+      void l.done.finally(() => {
+        const i = list2.indexOf(l);
+        if (i >= 0) list2.splice(i, 1);
+      });
+    }
+    while (r.loops.length < count2) {
+      const ctrl = new AbortController(), loop = { ctrl, done: Promise.resolve() };
+      loop.done = this.loop(r, ctrl.signal);
+      r.loops.push(loop);
+    }
+  }
+  /** Stop is checked between steps (a task is never cut off); a wait for work is interrupted at once. */
+  async loop(r, signal) {
+    const kind = this.o.kinds[r.spec.kind], spec = r.spec;
+    const space = (this.o.space ?? ((id3) => new PhiSpaces(this.o.host, this.o.ctx, this.o.now, void 0, void 0, { space: id3 })))(spec.targetSpace);
+    const sleep2 = this.o.sleep ?? abortableSleep, { minMs, maxMs } = this.o.backoff ?? { minMs: 100, maxMs: 5e3 };
+    let delay = 0;
+    while (!signal.aborted) {
+      try {
+        if (await kind.step({ space, spaceId: spec.targetSpace, ...spec.runId ? { runId: spec.runId } : {}, signal })) {
+          r.tasks++;
+          delay = 0;
+          await new Promise((res) => setImmediate(res));
+          continue;
+        }
+      } catch (e) {
+        r.errors++;
+        r.lastError = String(e?.message ?? e).slice(0, 256);
+      }
+      delay = Math.min(maxMs, Math.max(minMs, delay * 2));
+      await sleep2(delay, signal);
+    }
+  }
+  summary(state) {
+    const assignments = {};
+    for (const [id3, r] of this.running) assignments[id3] = { kind: r.spec.kind, targetSpace: r.spec.targetSpace, ...r.spec.runId ? { runId: r.spec.runId } : {}, desired: r.spec.count, active: r.loops.length, stopping: r.stopping.length, tasks: r.tasks, errors: r.errors, ...r.lastError ? { lastError: r.lastError } : {} };
+    for (const [id3, reason] of this.rejected) assignments[id3] = { ...assignments[id3] ?? { kind: "?", targetSpace: "?", desired: 0, active: 0, stopping: 0, tasks: 0, errors: 0 }, rejected: reason };
+    return { authorityId: state?.authorityId ?? null, incarnation: state?.incarnation ?? null, generation: state?.generation ?? 0, at: this.now(), ...this.blocked ? { blocked: this.blocked } : {}, ...this.fetchError ? { fetchError: this.fetchError } : {}, assignments };
+  }
+  /** Stops every loop after its current step and waits for them. */
+  async stop() {
+    const all = [...this.running.values()].flatMap((r) => {
+      this.scale(r, 0);
+      return r.stopping.map((l) => l.done);
+    });
+    await Promise.allSettled(all);
+    this.running.clear();
+  }
+};
+function startWorkerSupervisor(s, o = {}) {
+  let stopped = false, timer, active2 = Promise.resolve();
+  const run = () => {
+    active2 = s.reconcile().then((sum) => o.publish?.(sum)).catch(o.onError ?? (() => {
+    })).then(() => {
+      if (!stopped) timer = setTimeout(run, o.intervalMs ?? 15e3);
+    });
+  };
+  run();
+  return async () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    await active2;
+    await s.stop();
+  };
+}
+function workerCommands(w, applied) {
+  return {
+    /** Read-only: desired assignments and the last applied state per host (with its age). */
+    async listWorkers() {
+      const d = await w.list();
+      return { ...d, applied: applied ? await applied() : {} };
+    },
+    async setWorkers(id3, a) {
+      try {
+        return await w.set(id3, { assignmentId: String(a.assignmentId ?? ""), hostId: String(a.hostId ?? ""), kind: String(a.kind ?? ""), targetSpace: String(a.targetSpace ?? ""), count: Number(a.count), ...a.runId !== void 0 && a.runId !== null ? { runId: String(a.runId) } : {} });
+      } catch (e) {
+        if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
+        throw e;
+      }
+    }
+  };
+}
+
+// src/space-lifecycle.ts
+init_documents();
+init_types();
+init_claims();
+init_canonical();
+init_grants();
+init_enroll();
+init_spaces();
+init_core();
+var SpaceInUse = class extends TransactionError {
+};
+var ID3 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
+var hashOf3 = digestJson;
+var SpaceLifecycleJournal = defineDoc({
+  kind: "phi-spaces.space-lifecycle",
+  version: 1,
+  scope: "session",
+  initial: () => ({ commands: {} })
+});
+function why(s, now) {
+  if (s.membership && s.membership.state !== "detached") return `it is a federation Member (${s.membership.state}); removeMember first`;
+  if (s.entries.length) return `it still holds ${s.entries.length} entries; export and purge them first`;
+  if (Object.keys(s.txns).length || s.waiters.length || s.regs.length || (s.jobs ?? []).length || (s.releaseQueue ?? []).length) return "it still has open transactions, waits, registrations or follow-up work";
+  const disk = diskMapOf(s.rpc?.claims);
+  if ((disk ? disk.any() : Object.keys(s.rpc?.claims ?? {}).length) || claimPage(s.restoredClaims, null, 1).length) return "it retains request claims until their results expire";
+  if (Object.values(s.mailboxes?.boxes ?? {}).some((b) => b.events.length)) return "mailboxes still hold undelivered results";
+  if (Object.values(s.runGates ?? {}).some((g) => g.state !== "stopped" || g.recovery)) return "a run on it is not stopped";
+  if (s.restore && s.restore.stage !== "completed") return "a restore is in progress";
+  void now;
+  return void 0;
+}
+var SpaceLifecycle = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  async apply(q) {
+    if (!q || !ID3.test(q.commandId) || !["create", "archive", "reactivate", "delete"].includes(q.action)) throw new IllegalArgumentError("invalid Space lifecycle request");
+    if (q.action === "create" ? typeof q.alias !== "string" : typeof q.spaceId !== "string") throw new IllegalArgumentError(q.action === "create" ? "create needs an alias" : `${q.action} needs a spaceId`);
+    const hash9 = hashOf3({ action: q.action, alias: q.alias ?? null, spaceId: q.spaceId ?? null, limits: q.limits ?? null, profiles: q.profiles ?? null });
+    return this.o.host.commit(async (tx) => {
+      const j = await tx.doc(SpaceLifecycleJournal), old = j.commands[q.commandId];
+      if (old) {
+        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another lifecycle request");
+        return plain(old.result);
+      }
+      if (Object.keys(j.commands).length >= 4096) throw new ResourceExhausted("lifecycle journal is full");
+      const now = (this.o.now ?? Date.now)(), r = await tx.doc(Registry);
+      let result;
+      if (q.action === "create") {
+        const existed = Object.hasOwn(r.aliases, q.alias);
+        const info = await createSpace(tx, q.alias, now);
+        const s = await spaceDoc(tx, info.spaceId, now);
+        if (existed && s.archived) throw new RunGateConflict(`alias ${q.alias} names an archived Space; reactivate it instead`);
+        if (!existed) {
+          if (q.limits) setLimits(s, q.limits, now);
+          if (q.profiles) setCompletionProfiles(s, q.profiles, now);
+        } else if (q.limits && canonicalJson(limitsOf(s)) !== canonicalJson({ ...limitsOf(s), ...q.limits }) || q.profiles && canonicalJson(s.completionProfiles ?? []) !== canonicalJson(q.profiles)) throw new RunGateConflict(`Space ${q.alias} exists with other limits or profiles; it is reused only unchanged`);
+        result = { commandId: q.commandId, action: "create", spaceId: info.spaceId, alias: info.alias, state: "active", ...existed ? { existed: true } : {} };
+      } else {
+        const info = r.spaces[q.spaceId];
+        if (!info || info.deletedAt) throw new IllegalArgumentError(`no Space ${q.spaceId} on this host`);
+        if (info.spaceId === r.defaultSpaceId || info.alias === DEFAULT_ALIAS || info.alias === CONTROL_SPACE) throw new PermissionError("the default and the control Space have no lifecycle");
+        const s = await spaceDoc(tx, info.spaceId, now);
+        settle(s, now);
+        if (q.action === "archive") {
+          if (!s.archived) {
+            const reason = s.membership && s.membership.state !== "detached" ? `it is a federation Member (${s.membership.state}); removeMember first` : Object.keys(s.txns).length ? "it has open transactions" : Object.values(s.runGates ?? {}).some((g) => g.state !== "stopped") ? "a run on it is not stopped" : void 0;
+            if (reason) throw new SpaceInUse(`cannot archive: ${reason}`);
+            s.archived = { at: now, commandId: q.commandId };
+            touch2(s, now);
+          }
+          result = { commandId: q.commandId, action: "archive", spaceId: info.spaceId, alias: info.alias, state: "archived" };
+        } else if (q.action === "reactivate") {
+          if (s.archived) {
+            delete s.archived;
+            touch2(s, now);
+          }
+          result = { commandId: q.commandId, action: "reactivate", spaceId: info.spaceId, alias: info.alias, state: "active" };
+        } else {
+          if (!s.archived) throw new SpaceInUse("cannot delete: archive the Space first");
+          const reason = why(s, now);
+          if (reason) throw new SpaceInUse(`cannot delete: ${reason}`);
+          delete r.aliases[info.alias];
+          r.spaces[info.spaceId] = { ...info, deletedAt: now };
+          result = { commandId: q.commandId, action: "delete", spaceId: info.spaceId, alias: info.alias, state: "deleted" };
+        }
+      }
+      j.commands[q.commandId] = { hash: hash9, result };
+      return plain(result);
+    }, this.o.ctx);
+  }
+};
+var bytes9 = (kind, v) => Buffer.from(`phi-spaces/space-lifecycle-${kind}/v1
+` + canonicalJson(v));
+async function signLifecycle(kind, value, issuer, signer) {
+  return { value: plain(value), issuer, algorithm: signer.algorithm, signature: await signatureOf(signer, bytes9(kind, value)) };
+}
+function verifyLifecycle(kind, t, pin) {
+  if (!signedBy(t, pin, bytes9(kind, t?.value))) throw new PermissionError(`invalid Space lifecycle ${kind} signature`);
+  return plain(t.value);
+}
+var SpaceLifecycleService = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  async apply(t) {
+    const q = verifyLifecycle("instruction", t, this.o.controlPin);
+    if (q.authorityId !== this.o.authorityId || q.hostId !== this.o.hostId) throw new PermissionError("Space lifecycle instruction belongs to another authority or host");
+    await this.o.assertAuthority();
+    const { authorityId: _a, hostId: _h, ...request } = q;
+    const result = await this.o.lifecycle.apply(request);
+    await this.o.assertAuthority();
+    return signLifecycle("result", result, this.o.peerId, this.o.signer);
+  }
+};
+function spaceCommands(o) {
+  const run = (action) => async (commandId, a) => {
+    const hostId = String(a.hostId ?? "");
+    const q = { commandId, action, authorityId: o.authorityId, hostId, ...action === "create" ? { alias: String(a.alias ?? "") } : { spaceId: String(a.spaceId ?? "") }, ...a.limits ? { limits: a.limits } : {}, ...a.profiles ? { profiles: a.profiles } : {} };
+    let reply2;
+    try {
+      reply2 = await o.send(hostId, await signLifecycle("instruction", q, o.peerId, o.signer));
+    } catch (e) {
+      const m = String(e?.message ?? e);
+      if (/cannot (archive|delete)|IllegalArgument|invalid|no Space|exists with other|names an archived|have no lifecycle|another authority|was used for another|boot permission/.test(m)) return { phase: "failed", error: m.slice(0, 512) };
+      throw e;
+    }
+    const result = verifyLifecycle("result", reply2, await o.hostPin(hostId));
+    if (result.commandId !== commandId || result.action !== action) throw new PermissionError("Space lifecycle result does not match the command");
+    return result;
+  };
+  return { createSpace: run("create"), archiveSpace: run("archive"), reactivateSpace: run("reactivate"), deleteSpace: run("delete") };
+}
+
+// src/deployment.ts
+init_documents();
+init_canonical();
+init_spaces();
+init_core();
+var ALIAS2 = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+var ID4 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
+var SECRET_KEY = /token|secret|password|passwd|private|apikey|api_key|bearer|seed|mnemonic/i;
+var hashOf4 = digestJson;
+var sub = (...parts) => "dep-" + hashOf4(parts).slice(0, 40);
+function validateDeployment(raw) {
+  const errors = [];
+  const scan = (v, path) => {
+    if (typeof v === "string" && (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(v) || /^(sk|pk|ghp|xox[bp])[-_][A-Za-z0-9]{16,}/.test(v))) errors.push(`${path}: looks like a secret; keep credentials in the host secret store`);
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+      if (SECRET_KEY.test(k)) errors.push(`${path}.${k}: secret fields are not allowed in the config`);
+      scan(x, `${path}.${k}`);
+    }
+  };
+  scan(raw, "$");
+  const c = raw;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return { errors: ["config must be a JSON object"] };
+  const known = ["schemaVersion", "deployment", "configRevision", "coordinator", "hosts", "spaces", "routing", "workers", "mobile", "credentials"];
+  for (const k of Object.keys(c)) if (!known.includes(k)) errors.push(`unknown field ${k}`);
+  if (c.schemaVersion !== 1) errors.push("schemaVersion must be 1");
+  if (typeof c.deployment !== "string" || !ALIAS2.test(c.deployment)) errors.push("deployment: lower-case alias required");
+  if (c.configRevision !== void 0 && (!Number.isSafeInteger(c.configRevision) || c.configRevision < 1)) errors.push("configRevision must be a positive integer");
+  const hosts2 = Array.isArray(c.hosts) ? c.hosts : (errors.push("hosts must be a list"), []);
+  const spaces = Array.isArray(c.spaces) ? c.spaces : (errors.push("spaces must be a list"), []);
+  const workers = c.workers === void 0 ? [] : Array.isArray(c.workers) ? c.workers : (errors.push("workers must be a list"), []);
+  if (hosts2.length > 64 || spaces.length > 128 || workers.length > 128) errors.push("at most 64 hosts, 128 Spaces and 128 workers");
+  const unique = (list2, what) => {
+    const seen = /* @__PURE__ */ new Set();
+    for (const x of list2) {
+      if (!x || typeof x.alias !== "string" || !ALIAS2.test(x.alias)) errors.push(`${what}: invalid alias ${JSON.stringify(x?.alias)}`);
+      else if (seen.has(x.alias)) errors.push(`${what}: duplicate alias ${x.alias}`);
+      else seen.add(x.alias);
+    }
+    return seen;
+  };
+  const hostAliases = unique(hosts2, "hosts"), spaceAliases = unique(spaces, "spaces");
+  unique(workers, "workers");
+  for (const h of hosts2) if (h && !["coordinator", "member-host"].includes(h.role)) errors.push(`hosts.${h.alias}: role must be coordinator or member-host`);
+  if (!hostAliases.has(c.coordinator)) errors.push("coordinator must name a host");
+  else if (hosts2.find((h) => h.alias === c.coordinator)?.role !== "coordinator" || hosts2.filter((h) => h.role === "coordinator").length !== 1) errors.push("exactly the coordinator host has role coordinator");
+  for (const s of spaces) {
+    if (!s) continue;
+    if (!hostAliases.has(s.host)) errors.push(`spaces.${s.alias}: unknown host ${s.host}`);
+    if (!["control", "data"].includes(s.purpose)) errors.push(`spaces.${s.alias}: purpose must be control or data`);
+    if (s.purpose === "control" && s.host !== c.coordinator) errors.push(`spaces.${s.alias}: the control Space lives on the coordinator`);
+    if (s.maxSpaceBytes !== void 0 && (!Number.isSafeInteger(s.maxSpaceBytes) || s.maxSpaceBytes < 1024)) errors.push(`spaces.${s.alias}: maxSpaceBytes must be an integer of at least 1024`);
+    if (s.limits !== void 0 && (typeof s.limits !== "object" || Array.isArray(s.limits))) errors.push(`spaces.${s.alias}: limits must be an object`);
+  }
+  if (spaces.filter((s) => s?.purpose === "control").length !== 1) errors.push("exactly one control Space is required");
+  const dataSpaces = new Set(spaces.filter((s) => s?.purpose === "data").map((s) => s.alias));
+  if (c.routing !== void 0) {
+    const r = c.routing;
+    if (r.profile === "single-member-sieve") {
+      if (!r.member || !dataSpaces.has(r.member)) errors.push("routing.member must name a data Space");
+    } else if (r.profile === "sieve-hrw-by-taskid") {
+      if (!Array.isArray(r.members) || r.members.length < 2 || !r.members.every((m) => dataSpaces.has(m))) errors.push("routing.members must name at least two data Spaces");
+    } else errors.push("routing.profile must be single-member-sieve or sieve-hrw-by-taskid");
+  }
+  for (const w of workers) {
+    if (!w) continue;
+    if (!hostAliases.has(w.host)) errors.push(`workers.${w.alias}: unknown host ${w.host}`);
+    const target = spaces.find((s) => s?.alias === w.targetSpace);
+    if (!target || target.purpose !== "data") errors.push(`workers.${w.alias}: targetSpace must name a data Space`);
+    else if (target.host !== w.host) errors.push(`workers.${w.alias}: workers run on the host of their target Space`);
+    if (typeof w.kind !== "string" || !ID4.test(w.kind)) errors.push(`workers.${w.alias}: invalid kind`);
+    if (!Number.isSafeInteger(w.count) || w.count < 0 || w.count > 64) errors.push(`workers.${w.alias}: count must be 0..64`);
+    if (w.runId !== void 0 && !ID4.test(w.runId)) errors.push(`workers.${w.alias}: invalid runId`);
+  }
+  if (c.credentials !== void 0 && c.credentials.source !== "host-secret-store") errors.push("credentials.source must be host-secret-store");
+  if (errors.length) return { errors };
+  const config = plain(c);
+  return { config, configHash: hashOf4(config), errors };
+}
+var DeploymentState = defineDoc({
+  kind: "phi-spaces.deployment",
+  version: 1,
+  scope: "session",
+  initial: () => ({ hosts: {}, spaces: {}, jobs: {} })
+});
+var DeploymentController = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  now() {
+    return (this.o.now ?? Date.now)();
+  }
+  state() {
+    return this.o.host.snapshot(DeploymentState, this.o.ctx).then((s) => plain(s ?? { hosts: {}, spaces: {}, jobs: {} }));
+  }
+  /** Binds a host alias to an enrolled hostId. An alias never silently moves to another host. */
+  async bindHost(alias, hostId) {
+    if (!ALIAS2.test(alias) || typeof hostId !== "string" || !ID4.test(hostId)) throw new IllegalArgumentError("bindHost needs an alias and a hostId");
+    return this.o.host.commit(async (tx) => {
+      const d = await tx.doc(DeploymentState), old = d.hosts[alias];
+      if (old && old !== hostId) throw new RunGateConflict(`host alias ${alias} is bound to ${old}`);
+      if (Object.entries(d.hosts).some(([a, id3]) => id3 === hostId && a !== alias)) throw new RunGateConflict(`host ${hostId} already has another alias`);
+      d.hosts[alias] = hostId;
+      return { alias, hostId };
+    }, this.o.ctx);
+  }
+  /** What apply would do, without any effect. */
+  async plan(raw) {
+    const v = validateDeployment(raw);
+    if (!v.config) return { deployment: String(raw?.deployment ?? "?"), configHash: "", ready: false, steps: v.errors.map((e, i) => ({ key: `config:${i}`, action: "validate", status: "conflict", detail: e })) };
+    const c = v.config, st = await this.state(), steps = [];
+    for (const h of c.hosts) {
+      const id3 = st.hosts[h.alias];
+      if (!id3) {
+        steps.push({ key: `host:${h.alias}`, action: "bind", status: "blocked", detail: "host alias is not bound to an enrolled host; enroll it, then bindHost" });
+        continue;
+      }
+      const s = await this.o.ports.hostStatus(id3).catch(() => ({ fresh: false }));
+      steps.push({ key: `host:${h.alias}`, action: "check", status: s.fresh ? "ok" : "blocked", detail: s.fresh ? `${id3} reports a fresh heartbeat` : `${id3} has no fresh Capability heartbeat` });
+    }
+    for (const s of c.spaces) {
+      const bound = st.spaces[s.alias];
+      if (s.purpose === "control") {
+        steps.push({ key: `space:${s.alias}`, action: "control", status: bound && bound.spaceId !== this.o.ports.controlSpaceId ? "conflict" : "reuse", detail: "the coordinator's control Space" });
+        continue;
+      }
+      if (bound && bound.host !== s.host) steps.push({ key: `space:${s.alias}`, action: "create", status: "conflict", detail: `alias is bound to ${bound.spaceId} on ${bound.host}; Spaces do not move hosts` });
+      else steps.push({ key: `space:${s.alias}`, action: "create", status: bound ? "reuse" : "create", detail: bound ? `existing ${bound.spaceId}, reused unchanged` : `new Space on ${s.host}` });
+    }
+    if (c.routing) steps.push({ key: "routing", action: "policy", status: "skip", detail: `profile ${c.routing.profile}: membership and policy are applied with addMember/setPolicy (not part of this bootstrap)` });
+    const assigned = this.o.ports.workers ? (await this.o.ports.workers.list()).assignments : [];
+    for (const w of c.workers ?? []) {
+      const key2 = `worker:${w.alias}`;
+      if (!this.o.ports.workers) {
+        steps.push({ key: key2, action: "register", status: "blocked", detail: "no worker assignment directory configured" });
+        continue;
+      }
+      const old = assigned.find((a) => a.assignmentId === `${c.deployment}.${w.alias}`), target = st.spaces[w.targetSpace]?.spaceId;
+      if (!old) steps.push({ key: key2, action: "register", status: "create", detail: `${w.kind} on ${w.host}, registered with count 0; startWorkers sets ${w.count}` });
+      else if (old.hostId === st.hosts[w.host] && old.kind === w.kind && old.targetSpace === target && old.runId === w.runId) steps.push({ key: key2, action: "register", status: "reuse", detail: `unchanged definition; current count ${old.count} is kept` });
+      else if (old.count > 0) steps.push({ key: key2, action: "register", status: "conflict", detail: `definition changed while ${old.count} workers run; stop them (count 0) first` });
+      else steps.push({ key: key2, action: "register", status: "create", detail: "stopped assignment gets the new definition with count 0" });
+    }
+    return { deployment: c.deployment, configHash: v.configHash, ready: !steps.some((s) => s.status === "blocked" || s.status === "conflict"), steps };
+  }
+  /**
+   * Applies a config once per deployment and config hash; a repeated apply resumes the same job. Steps use stable
+   * sub-request IDs, so an unknown outcome is resolved by repeating them. A blocked or conflicting plan changes nothing.
+   */
+  async apply(raw) {
+    const plan = await this.plan(raw);
+    const v = validateDeployment(raw);
+    if (!v.config) return { deployment: plan.deployment, configHash: "", state: "blocked", steps: {}, plan };
+    const c = v.config, key2 = c.deployment;
+    const job = await this.o.host.commit(async (tx) => {
+      const d = await tx.doc(DeploymentState), old = d.jobs[key2];
+      if (old && old.configHash !== v.configHash && old.state === "applying") throw new RunGateConflict(`deployment ${key2} is still applying another config; repeat it until it completes or blocks`);
+      if (!old || old.configHash !== v.configHash) {
+        if (Object.keys(d.jobs).length >= 64 && !old) throw new ResourceExhausted("deployment journal is full");
+        d.jobs[key2] = { deployment: key2, configHash: v.configHash, config: plain(c), state: "applying", steps: {}, at: this.now() };
+      }
+      return plain(d.jobs[key2]);
+    }, this.o.ctx);
+    if (job.state === "completed") return { deployment: key2, configHash: job.configHash, state: job.state, steps: job.steps };
+    if (!plan.ready) {
+      await this.record(key2, job.configHash, (d) => {
+        d.state = "blocked";
+      });
+      return { deployment: key2, configHash: job.configHash, state: "blocked", steps: job.steps, plan };
+    }
+    const st = await this.state();
+    for (const s of c.spaces) {
+      const step = `space:${s.alias}`;
+      if (job.steps[step]?.status === "done") continue;
+      if (s.purpose === "control") {
+        await this.space(key2, job.configHash, s.alias, s.host, this.o.ports.controlSpaceId, step);
+        continue;
+      }
+      const limits = { ...s.limits ?? {}, ...s.maxSpaceBytes ? { maxSpaceBytes: s.maxSpaceBytes } : {} };
+      const r = await this.o.ports.createSpace(sub(key2, job.configHash, "space", s.alias), { hostId: st.hosts[s.host], alias: s.alias, ...Object.keys(limits).length ? { limits } : {}, ...s.profiles ? { profiles: s.profiles } : {} });
+      if (r?.phase === "failed" || typeof r?.spaceId !== "string") {
+        await this.record(key2, job.configHash, (d) => {
+          d.steps[step] = { status: "failed", error: String(r?.error ?? "no spaceId").slice(0, 512) };
+          d.state = "blocked";
+        });
+        return this.view(key2);
+      }
+      await this.space(key2, job.configHash, s.alias, s.host, r.spaceId, step, r);
+    }
+    const bound = (await this.state()).spaces, assigned = (await this.o.ports.workers?.list())?.assignments ?? [];
+    for (const w of c.workers ?? []) {
+      const step = `worker:${w.alias}`;
+      if (job.steps[step]?.status === "done") continue;
+      const old = assigned.find((a) => a.assignmentId === `${key2}.${w.alias}`);
+      if (old && old.hostId === st.hosts[w.host] && old.kind === w.kind && old.targetSpace === bound[w.targetSpace].spaceId && old.runId === w.runId) {
+        await this.record(key2, job.configHash, (d) => {
+          d.steps[step] = { status: "done", result: old };
+        });
+        continue;
+      }
+      const spec = await this.o.ports.workers.set(sub(key2, job.configHash, "worker", w.alias), { assignmentId: `${key2}.${w.alias}`, hostId: st.hosts[w.host], kind: w.kind, targetSpace: bound[w.targetSpace].spaceId, count: 0, ...w.runId ? { runId: w.runId } : {} });
+      await this.record(key2, job.configHash, (d) => {
+        d.steps[step] = { status: "done", result: spec };
+      });
+    }
+    if (c.routing) await this.record(key2, job.configHash, (d) => {
+      d.steps.routing = { status: "skipped", error: "membership and policy are separate admin commands" };
+    });
+    await this.record(key2, job.configHash, (d) => {
+      d.state = "completed";
+    });
+    return this.view(key2);
+  }
+  async space(key2, hash9, alias, host, spaceId, step, result) {
+    await this.record(key2, hash9, (d, all) => {
+      const old = all.spaces[alias];
+      if (old && (old.spaceId !== spaceId || old.host !== host)) throw new RunGateConflict(`Space alias ${alias} is bound to ${old.spaceId}`);
+      all.spaces[alias] = { host, spaceId };
+      d.steps[step] = { status: "done", result: result ?? { spaceId } };
+    });
+  }
+  record(key2, hash9, f) {
+    return this.o.host.commit(async (tx) => {
+      const d = await tx.doc(DeploymentState), j = d.jobs[key2];
+      if (!j || j.configHash !== hash9) throw new RunGateConflict("deployment job changed");
+      f(j, d);
+    }, this.o.ctx);
+  }
+  async view(key2) {
+    const j = (await this.state()).jobs[key2];
+    return { deployment: key2, configHash: j.configHash, state: j.state, steps: j.steps };
+  }
+  /** Starts (or rescales) the registered workers of a completed deployment to their configured counts. */
+  async startWorkers(commandId, deployment) {
+    if (!ID4.test(commandId)) throw new IllegalArgumentError("invalid command ID");
+    const st = await this.state(), job = st.jobs[deployment];
+    if (!job || job.state !== "completed") throw new RunGateConflict(`deployment ${deployment} is not completed`);
+    const out = [];
+    for (const w of job.config.workers ?? []) {
+      const spec = await this.o.ports.workers.set(sub(commandId, w.alias), { assignmentId: `${deployment}.${w.alias}`, hostId: st.hosts[w.host], kind: w.kind, targetSpace: st.spaces[w.targetSpace].spaceId, count: w.count, ...w.runId ? { runId: w.runId } : {} });
+      out.push({ alias: w.alias, count: spec.count, generation: spec.generation });
+    }
+    return out;
+  }
+  /** The applied state for export and diff: bindings, last config per deployment and current worker counts. */
+  async export(deployment) {
+    const st = await this.state(), job = st.jobs[deployment];
+    const assigned = this.o.ports.workers ? (await this.o.ports.workers.list()).assignments : [];
+    const workers = (job?.config.workers ?? []).map((w) => ({ alias: w.alias, count: assigned.find((a) => a.assignmentId === `${deployment}.${w.alias}`)?.count ?? 0 }));
+    return { deployment, configHash: job?.configHash ?? null, state: job?.state ?? null, hosts: st.hosts, spaces: st.spaces, workers, config: job?.config ?? null };
+  }
+};
+function deploymentCommands(d) {
+  const wrap = (f) => async (id3, a) => {
+    try {
+      return await f(id3, a);
+    } catch (e) {
+      if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
+      throw e;
+    }
+  };
+  return {
+    planDeployment: wrap((_id, a) => d.plan(a.config)),
+    applyDeployment: wrap((_id, a) => d.apply(a.config)),
+    bindHostAlias: wrap((_id, a) => d.bindHost(String(a.alias ?? ""), String(a.hostId ?? ""))),
+    startWorkers: wrap((id3, a) => d.startWorkers(id3, String(a.deployment ?? ""))),
+    exportDeployment: wrap((_id, a) => d.export(String(a.deployment ?? "")))
+  };
+}
+function capabilityHostStatus(host, ctx, controlSpaceId, now = Date.now) {
+  return async (hostId) => {
+    const s = await snapshotSpace(host, controlSpaceId, ctx), t = now();
+    const at = Math.max(-Infinity, ...s ? list(s, t, { type: "Capability", fields: { hostId } }).map((e) => Number(e.fields.at)) : []);
+    return Number.isFinite(at) ? { fresh: t - at < CAPABILITY_LEASE_MS, at } : { fresh: false };
+  };
+}
+
+// src/data-admin.ts
+init_documents();
+init_claims();
+init_types();
+init_canonical();
+init_mailbox();
+init_spaces();
+init_stream();
+init_core();
+init_json();
+import { createHash as createHash5 } from "node:crypto";
+var DataAdminJournal = defineDocFamily({
+  kind: "phi-spaces.data-admin",
+  version: 1,
+  scope: "session",
+  family: true,
+  initial: () => ({ commands: {} })
+});
+var bytes10 = jsonBytes;
+var audit = (c) => ({ hash: c.hash, at: c.at, kind: c.kind, admin: c.admin, count: c.count });
+function commandHash(id3, kind, spaceId, admin, input) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(id3) || ["__proto__", "constructor", "prototype"].includes(id3)) throw new IllegalArgumentError("invalid admin command ID");
+  if (typeof spaceId !== "string" || !spaceId || spaceId.length > 128 || typeof admin !== "string" || !admin || admin.length > 128) throw new IllegalArgumentError("invalid admin or Space identifier");
+  if (!["purgeTasks", "deletePrincipal"].includes(kind)) throw new IllegalArgumentError("invalid admin command kind");
+  return digestJson({ kind, spaceId, admin, input });
+}
+function validatePrincipal(p) {
+  if (!validPrincipal(p)) throw new IllegalArgumentError("invalid deletion principal");
+}
+function assertTuple(c, s) {
+  if (c.incarnation !== void 0 && (c.incarnation !== (s.incarnation ?? null) || c.authorityId !== (s.acceptedAuthorityId ?? s.membership?.authorityId ?? null))) throw new TransactionError("deletion incarnation or authority changed; restore review required");
+}
+function stableSpace(s, id3) {
+  if (s.spaceId !== id3) throw new IllegalArgumentError("admin commands require the immutable Space ID");
+}
+function quiescent(s) {
+  if (Object.keys(s.txns).length || s.waiters.length || (s.jobs ?? []).length || (s.releaseQueue ?? []).length || pendingClaims(s).length > 0) throw new TransactionError("principal deletion requires a quiescent Space");
+}
+function reserveHeader(s, now, id3) {
+  if (!maintenanceStep(s, 1024, now, "delete-principal:" + id3)) throw new ResourceExhausted("admin metadata exceeds maxCommitBytes");
+}
+var DataAdminController = class {
+  o;
+  constructor(o) {
+    this.o = o;
+  }
+  async check(admin, kind, sid) {
+    await this.o.authorize(admin, kind, sid);
+    await this.o.assertAuthority();
+  }
+  async execute(id3, kind, spaceId, admin, input) {
+    const hash9 = commandHash(id3, kind, spaceId, admin, input);
+    if (kind === "deletePrincipal") {
+      await this.startDeletion(id3, spaceId, admin, input);
+      for (; ; ) {
+        const r = await this.advanceDeletion(id3, spaceId, admin, input);
+        if (r.phase === "completed") return audit(r);
+      }
+    }
+    await this.check(admin, kind, spaceId);
+    return this.o.host.commit(async (tx) => {
+      await this.check(admin, kind, spaceId);
+      const d = await tx.doc(DataAdminJournal, spaceId, null), old = d.commands[id3];
+      if (old) {
+        if (old.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
+        const s2 = await spaceDoc(tx, spaceId, (this.o.now ?? Date.now)());
+        stableSpace(s2, spaceId);
+        assertTuple(old, s2);
+        return audit(old);
+      }
+      if (Object.keys(d.commands).length >= 128) throw new ResourceExhausted("admin journal is full");
+      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
+      stableSpace(s, spaceId);
+      assertAdminIdle(s);
+      reserveHeader(s, now, id3);
+      const c = { hash: hash9, kind, admin, at: now, count: purgeTasks(s, now, input), incarnation: s.incarnation ?? null, authorityId: s.acceptedAuthorityId ?? s.membership?.authorityId ?? null };
+      d.commands[id3] = c;
+      await this.check(admin, kind, spaceId);
+      return audit(c);
+    }, this.o.ctx);
+  }
+  /** Explicit start/advance are also usable by a supervisor that resumes one batch at a time. */
+  async startDeletion(id3, spaceId, admin, p) {
+    validatePrincipal(p);
+    const hash9 = commandHash(id3, "deletePrincipal", spaceId, admin, p);
+    await this.check(admin, "deletePrincipal", spaceId);
+    return this.o.host.commit(async (tx) => {
+      await this.check(admin, "deletePrincipal", spaceId);
+      const d = await tx.doc(DataAdminJournal, spaceId, null), old = d.commands[id3];
+      if (old) {
+        if (old.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
+        const s2 = await spaceDoc(tx, spaceId, (this.o.now ?? Date.now)());
+        stableSpace(s2, spaceId);
+        assertTuple(old, s2);
+        return { ...audit(old), phase: old.phase ?? "completed", batches: old.batches ?? 0 };
+      }
+      if (Object.keys(d.commands).length >= 128) throw new ResourceExhausted("admin journal is full");
+      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
+      stableSpace(s, spaceId);
+      assertAdminIdle(s);
+      settle(s, now);
+      quiescent(s);
+      reserveHeader(s, now, id3);
+      s.adminMaintenance = { commandId: id3, hash: hash9 };
+      s.snapshotEpoch = (s.snapshotEpoch ?? 0) + 1;
+      if (docBytes(s) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("admin fence exceeds maxDocBytes");
+      d.commands[id3] = { hash: hash9, kind: "deletePrincipal", admin, at: now, count: 0, phase: "registrations", principal: plain(p), incarnation: s.incarnation ?? null, authorityId: s.acceptedAuthorityId ?? s.membership?.authorityId ?? null, batches: 0 };
+      touch2(s, now);
+      await this.check(admin, "deletePrincipal", spaceId);
+      return { ...audit(d.commands[id3]), phase: "registrations", batches: 0 };
+    }, this.o.ctx);
+  }
+  async advanceDeletion(id3, spaceId, admin, p) {
+    validatePrincipal(p);
+    const hash9 = commandHash(id3, "deletePrincipal", spaceId, admin, p);
+    await this.check(admin, "deletePrincipal", spaceId);
+    return this.o.host.commit(async (tx) => {
+      await this.check(admin, "deletePrincipal", spaceId);
+      const d = await tx.doc(DataAdminJournal, spaceId, null), c = d.commands[id3];
+      if (!c) throw new IllegalArgumentError("unknown deletion command");
+      if (c.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
+      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
+      stableSpace(s, spaceId);
+      assertTuple(c, s);
+      if (!c.phase || c.phase === "completed") return { ...audit(c), phase: "completed", batches: c.batches ?? 0 };
+      if (s.adminMaintenance?.commandId !== id3 || s.adminMaintenance.hash !== hash9 || c.incarnation !== (s.incarnation ?? null) || c.authorityId !== (s.acceptedAuthorityId ?? s.membership?.authorityId ?? null)) throw new TransactionError("deletion fence or incarnation changed; restore review required");
+      quiescent(s);
+      reserveHeader(s, now, id3);
+      eraseBatch(s, c, p, now, id3);
+      c.batches = (c.batches ?? 0) + 1;
+      const phase = c.phase;
+      if (phase === "completed") {
+        delete c.principal;
+        delete s.adminMaintenance;
+        delete s.maintenance;
+        s.snapshotEpoch = (s.snapshotEpoch ?? 0) + 1;
+      }
+      touch2(s, now);
+      await this.check(admin, "deletePrincipal", spaceId);
+      return { ...audit(c), phase, batches: c.batches };
+    }, this.o.ctx);
+  }
+};
+function eraseBatch(s, c, p, now, id3) {
+  const pid = principalId(p), same3 = (q) => principalId(q) === pid, ids = new Set(s.entries.filter((e) => e.owner === pid).map((e) => e.id));
+  let mutations = 0;
+  const spend = (cost) => {
+    if (mutations >= 32) return false;
+    if (!maintenanceStep(s, cost, now, "delete-principal:" + id3)) {
+      if (mutations === 0) throw new ResourceExhausted("one deletion tombstone exceeds maxCommitBytes; operator review required");
+      return false;
+    }
+    mutations++;
+    return true;
+  };
+  const affected = (v) => typeof v === "string" ? v === pid || ids.has(v) : v !== null && typeof v === "object" ? Object.values(v).some(affected) : false;
+  switch (c.phase) {
+    case "registrations": {
+      for (let i = s.regs.length - 1; i >= 0; i--) {
+        const r = s.regs[i];
+        if (r.target === pid || r.consumer && same3(r.consumer)) {
+          if (!spend(256)) return;
+          s.regs.splice(i, 1);
+        } else if (r.pendingEntry && ids.has(r.pendingEntry.id)) {
+          if (!spend(256)) return;
+          delete r.pendingEntry;
+          r.pending = 0;
+        }
+      }
+      for (let i = s.outbox.length - 1; i >= 0; i--) {
+        const e = s.outbox[i];
+        if (e.target === pid || e.entry && ids.has(e.entry.id)) {
+          if (!spend(256)) return;
+          s.outbox.splice(i, 1);
+        }
+      }
+      c.phase = "mailboxes";
+      return;
+    }
+    case "mailboxes": {
+      for (const [key2, b] of Object.entries(s.mailboxes?.boxes ?? {})) {
+        if (same3(b.principal)) {
+          if (!spend(256 + bytes10(key2))) return;
+          delete s.mailboxes.boxes[key2];
+        } else if (b.events.some((e) => e.event.entry && ids.has(e.event.entry.id))) {
+          if (!spend(512 + bytes10(key2))) return;
+          b.gap = { epoch: b.epoch, from: b.acked + 1, to: b.next - 1 };
+          b.epoch = "deleted-" + createHash5("sha256").update(b.epoch + id3).digest("hex");
+          b.acked = b.next - 1;
+          b.delivered = b.acked;
+          b.events = [];
+          b.bytes = 2;
+        }
+      }
+      c.phase = "claims";
+      return;
+    }
+    case "claims": {
+      {
+        const claims = s.rpc?.claims;
+        const disk = diskMapOf(claims), inRpc = true;
+        const change = (key2, before, next) => {
+          if (disk && inRpc) {
+            s.rpc.bytes = (s.rpc.bytes ?? 0) - bytes10(before) + (next ? bytes10(next) : -bytes10(key2) - 2);
+            s.rpc.reservedBytes = Math.max(0, (s.rpc.reservedBytes ?? 0) - (before.reservedResultBytes ?? 0));
+          }
+          if (next) claims[key2] = next;
+          else delete claims[key2];
+        };
+        const handle = (key2, claim) => {
+          if (same3(claim.principal)) {
+            if (!spend(256 + bytes10(key2))) return false;
+            change(key2, claim, void 0);
+          } else if (claim.result !== void 0 && affected(claim.result)) {
+            if (!spend(256 + bytes10(key2))) return false;
+            const { result: _r, reservedResultBytes: _b, ...rest } = claim;
+            change(key2, claim, { ...rest, resultExpired: true });
+          }
+          return true;
+        };
+        if (disk) {
+          for (let page = disk.page(c.claimKey ?? null, 64); page.length; page = disk.page(c.claimKey ?? null, 64)) for (const [key2, claim] of page) {
+            if (!handle(key2, claim)) return;
+            c.claimKey = key2;
+          }
+        } else for (const [key2, claim] of Object.entries(claims ?? {})) if (!handle(key2, claim)) {
+          tally(s);
+          return;
+        }
+      }
+      for (let page = claimPage(s.restoredClaims, c.restoredKey ?? null, 64); page.length; page = claimPage(s.restoredClaims, c.restoredKey ?? null, 64)) for (const [key2, claim] of page) {
+        if (same3(claim.principal)) {
+          if (!spend(256 + bytes10(key2))) {
+            if (!diskMapOf(s.rpc?.claims)) tally(s);
+            return;
+          }
+          setRestored(s, key2, void 0);
+        } else if (claim.result !== void 0 && affected(claim.result)) {
+          if (!spend(256 + bytes10(key2))) {
+            if (!diskMapOf(s.rpc?.claims)) tally(s);
+            return;
+          }
+          const { result: _r, reservedResultBytes: _b, ...rest } = claim;
+          setRestored(s, key2, { ...rest, resultExpired: true });
+        }
+        c.restoredKey = key2;
+      }
+      if (!diskMapOf(s.rpc?.claims)) tally(s);
+      c.phase = "generations";
+      return;
+    }
+    case "generations": {
+      const disk = !!diskMapOf(s.rpc?.claims);
+      for (const [g, r] of Object.entries(s.rpc?.generations ?? {})) if (same3(r.principal)) {
+        if (!spend(256 + bytes10(g))) {
+          if (!disk) tally(s);
+          return;
+        }
+        if (disk) s.rpc.bytes = (s.rpc.bytes ?? 0) - bytes10(r) - bytes10(g) - 2;
+        delete s.rpc.generations[g];
+      }
+      if (!disk) tally(s);
+      c.phase = "entries";
+      return;
+    }
+    case "entries": {
+      for (let i = s.entries.length - 1; i >= 0; i--) if (s.entries[i].owner === pid) {
+        if (!spend(256 + bytes10(s.entries[i].id))) return;
+        s.entries.splice(i, 1);
+        c.count++;
+      }
+      c.phase = "history";
+      return;
+    }
+    case "history": {
+      if (!spend(512)) return;
+      if (s.stream) {
+        s.stream.floor = s.stream.rev;
+        s.stream.log = [];
+        s.stream.bytes = 0;
+        seal(s);
+      }
+      c.phase = "completed";
+      return;
+    }
+  }
+}
+function tally(s) {
+  if (s.rpc) {
+    s.rpc.bytes = bytes10(s.rpc.claims) + bytes10(s.rpc.generations);
+    s.rpc.reservedBytes = Object.values(s.rpc.claims).reduce((n, c) => n + (c.reservedResultBytes ?? 0), 0);
+  }
+}
+
 // src/configured-root.ts
+init_core();
 var endpointOf = (m, hostId) => hostId === m.target.hostId ? m : m.replicas?.[hostId];
 var provisionedTarget = (m, t) => !!m && (canonicalJson(m.target) === canonicalJson(t) || !!m.replicas && !!endpointOf(m, t.hostId) && t.spaceId === m.target.spaceId && t.authorityId === m.target.authorityId);
 async function createConfiguredRoot(o) {
   const cfg = o.root;
   if (!o.controlSigner.publicKey || !cfg.id || !cfg.keyFile || !cfg.hostKeyFile || !cfg.leaseFile || !cfg.members || Object.keys(cfg.members).length > 32) throw new BootBlocked("incomplete native Root provisioning");
+  if (cfg.commands && Object.values(cfg.commands).some(Boolean) && !cfg.adminPeer) throw new BootBlocked("admin commands need the configured adminPeer");
   const interval = cfg.statusIntervalMs ?? 1e4;
   if (!Number.isSafeInteger(interval) || interval < 1e3 || interval > 15e3) throw new BootBlocked("Root status interval must be 1000..15000 ms");
   const signer = loadFileSigner(cfg.keyFile), hostSigner = loadFileSigner(cfg.hostKeyFile), sockets = /* @__PURE__ */ new Map();
@@ -11753,7 +13274,58 @@ async function createConfiguredRoot(o) {
       });
     };
     heartbeat();
-    return { ...controller, adoptReplicaNotices: adoptNotices, withAdmin: (peerId, run) => adminContext.run(peerId, run), close: async () => {
+    const cm = cfg.commands;
+    let runs, workers, spaces, deployment, dataAdmin;
+    if (cm && Object.values(cm).some(Boolean)) {
+      const identity = async () => ({ authorityId: o.authorityId, incarnation: (await controlState())?.incarnation ?? null });
+      const currentHost = async (id3) => (await o.host.snapshot(FederationRouting, o.controlSpaceId, o.ctx))?.members[id3]?.target.hostId ?? cfg.members[id3].target.hostId;
+      const remoteOf = async (id3, spaceId) => {
+        const hostId = await currentHost(id3), e = endpointOf(cfg.members[id3], hostId);
+        if (!e) throw new BootBlocked("Member endpoint is not provisioned");
+        const p = { peerId: o.peerId, agentId: "root-admin" };
+        const remote = new RemoteSpace(transport(id3), { space: spaceId, signer, expectedGateHostId: hostId, ownPeerId: o.peerId, attempts: 1, grantProvider: async () => await grant2(p) });
+        await remote.authenticate();
+        return { remote, pin: { issuer: e.peerId, algorithm: e.algorithm, publicKey: e.publicKey } };
+      };
+      const memberBySpace = (spaceId) => Object.entries(cfg.members).find(([, m]) => m.target.spaceId === spaceId)?.[0];
+      const memberByHost = (hostId) => Object.entries(cfg.members).find(([, m]) => endpointOf(m, hostId))?.[0];
+      if (cm.runs) {
+        const member = (spaceId) => {
+          const call = async (q, spec) => {
+            const id3 = memberBySpace(spaceId);
+            if (!id3) throw new IllegalArgumentError(`Space ${spaceId} belongs to no provisioned Member`);
+            const { remote, pin } = await remoteOf(id3, spaceId);
+            const ack = verifyRun("ack", await remote.requestRunGate(await signRun("instruction", { ...q, authorityId: o.authorityId, spaceId, ...spec ? { spec } : {} }, o.peerId, o.controlSigner)), pin);
+            if (ack.spaceId !== spaceId) throw new PermissionError("run gate ACK names another Space");
+            return ack;
+          };
+          return { spaceId, prepare: (run, command) => call(command, run), gate: (command) => call(command), recover: (runId, recoveryId) => call({ runId, commandId: recoveryId, kind: "recover", revision: 0, recoveryId, expiresAt: Date.now() + RECOVER_TTL_MS }) };
+        };
+        runs = new RunController({ host: o.host, ctx: o.ctx, member, identity });
+      }
+      if (cm.workers || cm.deployment) workers = new WorkerAssignments({ host: o.host, ctx: o.ctx, authorityId: o.authorityId, peerId: o.peerId, signer: o.controlSigner, identity });
+      if (cm.spaces || cm.deployment) {
+        const hostEnd = (hostId) => {
+          const id3 = memberByHost(hostId), e = id3 ? endpointOf(cfg.members[id3], hostId) : void 0;
+          if (!id3 || !e) throw new IllegalArgumentError(`invalid hostId: ${hostId} is no provisioned Member host`);
+          return { id: id3, e };
+        };
+        spaces = spaceCommands({ authorityId: o.authorityId, peerId: o.peerId, signer: o.controlSigner, hostPin: async (hostId) => {
+          const { e } = hostEnd(hostId);
+          return { issuer: e.peerId, algorithm: e.algorithm, publicKey: e.publicKey };
+        }, send: async (hostId, t) => {
+          const { id: id3 } = hostEnd(hostId);
+          return (await remoteOf(id3, cfg.members[id3].target.spaceId)).remote.requestSpaceLifecycle(t);
+        } });
+      }
+      if (cm.deployment) deployment = new DeploymentController({ host: o.host, ctx: o.ctx, ports: { hostStatus: capabilityHostStatus(o.host, o.ctx, o.controlSpaceId), createSpace: spaces.createSpace, workers, controlSpaceId: o.controlSpaceId } });
+      if (cm.dataAdmin) dataAdmin = new DataAdminController({ host: o.host, ctx: o.ctx, assertAuthority: async () => {
+        await assertRoot();
+      }, authorize: async (admin) => {
+        if (admin !== cfg.adminPeer.peerId) throw new PermissionError("data administration is for the configured admin peer");
+      } });
+    }
+    return { ...controller, adoptReplicaNotices: adoptNotices, ...runs ? { runs } : {}, ...cm?.workers && workers ? { workers } : {}, ...cm?.spaces && spaces ? { spaces } : {}, ...deployment ? { deployment } : {}, ...dataAdmin ? { dataAdmin } : {}, withAdmin: (peerId, run) => adminContext.run(peerId, run), close: async () => {
       stopped = true;
       if (timer) clearTimeout(timer);
       for (const s of sockets.values()) s.close();
@@ -11768,669 +13340,6 @@ async function createConfiguredRoot(o) {
 
 // src/configured-runtime.ts
 import { totalmem, freemem, availableParallelism } from "node:os";
-
-// src/run-member.ts
-init_canonical();
-init_grants();
-init_spaces();
-
-// src/run-controller.ts
-init_documents();
-init_canonical();
-init_spaces();
-init_core();
-var RunJournal = defineDoc({
-  kind: "phi-spaces.run-controller",
-  version: 1,
-  scope: "session",
-  initial: () => ({ runs: {} })
-});
-var RunBusy = class extends TransactionError {
-};
-var MAX_RUNS = 1024;
-var MAX_MEMBERS = 64;
-var MAX_CONFIG_BYTES = 16 * 1024;
-var MAX_COMMANDS = 256;
-var MAX_ISSUED = 128;
-var ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
-var hashOf = digestJson;
-var sameIdentity = (a, b) => a.authorityId === b.authorityId && a.incarnation === b.incarnation;
-function validate2(spec) {
-  if (!spec || !ID.test(spec.runId) || typeof spec.kind !== "string" || !ID.test(spec.kind)) throw new IllegalArgumentError("a run needs a runId and a kind");
-  if (!Array.isArray(spec.members) || !spec.members.length || spec.members.length > MAX_MEMBERS || new Set(spec.members).size !== spec.members.length || !spec.members.every((m) => typeof m === "string" && ID.test(m))) throw new IllegalArgumentError(`a run needs 1..${MAX_MEMBERS} distinct Members`);
-  if (Buffer.byteLength(canonicalJson(spec.config)) > MAX_CONFIG_BYTES) throw new LimitError("run configuration is too large");
-}
-function issue(r, p) {
-  r.issued.push(p.commandId);
-  if (r.issued.length > MAX_ISSUED) r.issued.splice(0, r.issued.length - MAX_ISSUED);
-  return p;
-}
-function viewHash(r, views) {
-  return hashOf({ runId: r.spec.runId, members: r.spec.members, journal: { revision: r.revision, state: r.state }, abandoned: r.recovery?.abandoned ?? null, views: r.spec.members.map((m) => views[m] ?? null) });
-}
-function viewOf(r) {
-  const v = { runId: r.spec.runId, kind: r.spec.kind, members: [...r.spec.members], revision: r.revision, state: r.state };
-  const p = r.pending, q = r.recovery;
-  if (q) v.recovery = { id: q.id, stage: q.stage, ...q.reason ? { reason: q.reason } : {}, ...q.viewHash ? { viewHash: q.viewHash } : {}, ...q.abandoned ? { abandoned: { ...q.abandoned } } : {}, ...q.decision ? { decision: { ...q.decision } } : {}, errors: { ...q.errors }, ...q.changed ? { changed: { ...q.changed } } : {}, ...q.partial ? { partial: [...q.partial] } : {}, views: plain(q.views) };
-  if (p) {
-    const errors = { ...p.errors };
-    v.state = p.kind === "prepare" || p.kind === "release" ? "preparing" : p.kind === "pause" ? Object.keys(errors).length ? "pauseIncomplete" : "pausing" : p.kind === "resume" ? "resuming" : "stopping";
-    v.pending = {
-      commandId: p.commandId,
-      kind: p.kind,
-      revision: p.revision,
-      errors,
-      applied: r.spec.members.filter((m) => p.acks[m]?.phase === "applied"),
-      fenced: r.spec.members.filter((m) => p.acks[m]?.phase === "fenced"),
-      missing: r.spec.members.filter((m) => !p.acks[m])
-    };
-  }
-  if (q) v.state = q.stage === "review" || q.stage === "required" ? "needsReview" : "reconciling";
-  return v;
-}
-var RunController = class {
-  o;
-  /** `identity`: the current control authority and incarnation; pending transitions of another one are never resent. */
-  constructor(o) {
-    this.o = o;
-  }
-  now() {
-    return (this.o.now ?? Date.now)();
-  }
-  async identity() {
-    return this.o.identity ? plain(await this.o.identity()) : void 0;
-  }
-  commit(f) {
-    return this.o.host.commit(async (tx) => f((await tx.doc(RunJournal)).runs), this.o.ctx);
-  }
-  /** Journals the run, prepares every Member behind a `preparing` gate and releases the gates once all are prepared. */
-  async start(commandId, spec) {
-    validate2(spec);
-    if (!ID.test(commandId)) throw new IllegalArgumentError("invalid command ID");
-    const hash9 = hashOf({ op: "start", spec }), identity = await this.identity();
-    await this.commit((runs) => {
-      const old = Object.hasOwn(runs, spec.runId) ? runs[spec.runId] : void 0;
-      if (old) {
-        if (old.commands[commandId]?.hash === hash9) return;
-        throw new RunGateConflict(`run ${spec.runId} was already started by another command`);
-      }
-      if (Object.keys(runs).length >= MAX_RUNS) throw new ResourceExhausted("run journal is full");
-      runs[spec.runId] = { spec: plain(spec), revision: 0, state: "preparing", at: this.now(), tuples: {}, issued: [], commands: { [commandId]: { hash: hash9, kind: "start", revision: 1 } } };
-      const r = runs[spec.runId];
-      r.pending = issue(r, { commandId, kind: "prepare", revision: 1, acks: {}, errors: {}, ...identity ? { identity } : {} });
-    });
-    return this.advance(spec.runId);
-  }
-  pause(commandId, runId) {
-    return this.transition(commandId, runId, "pause");
-  }
-  resume(commandId, runId) {
-    return this.transition(commandId, runId, "resume");
-  }
-  stop(commandId, runId) {
-    return this.transition(commandId, runId, "stop");
-  }
-  async transition(commandId, runId, kind) {
-    if (!ID.test(commandId)) throw new IllegalArgumentError("invalid command ID");
-    const hash9 = hashOf({ op: kind, runId }), identity = await this.identity();
-    await this.commit((runs) => {
-      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
-      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
-      const old = r.commands[commandId];
-      if (old) {
-        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
-        return;
-      }
-      if (r.recovery) throw new RunBusy(`run ${runId} is under recovery ${r.recovery.id}; resolve it first`);
-      const supersede = kind === "stop" && (r.pending?.kind === "prepare" || r.pending?.kind === "release");
-      if (r.pending && !supersede) throw new RunBusy(`run ${runId} is still applying ${r.pending.kind} at revision ${r.pending.revision}`);
-      const from = { pause: ["running"], resume: ["paused"], stop: ["preparing", "running", "paused"] }[kind];
-      if (!from.includes(r.state)) throw new RunGateConflict(`cannot ${kind} run ${runId} while it is ${r.state}`);
-      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
-      r.pending = issue(r, { commandId, kind, revision: (r.pending?.revision ?? r.revision) + 1, acks: {}, errors: {}, ...identity ? { identity } : {} });
-      r.commands[commandId] = { hash: hash9, kind, revision: r.pending.revision };
-    });
-    return this.advance(runId);
-  }
-  /**
-   * Starts the reconciliation of a run after a Control or Data restore (§6 Abgleich nach Restore). A pending
-   * transition is parked as evidence and never resent. Every Member installs the recovery entry fence and reports
-   * its view. Identical stable paused/stopped views of known origin are confirmed with fresh ACKs; anything else
-   * waits for `resolve`. `manifest` rebuilds a run the restored journal no longer knows.
-   */
-  async reconcile(commandId, runId, recoveryId, manifest) {
-    if (!ID.test(commandId) || !ID.test(recoveryId)) throw new IllegalArgumentError("invalid command or recovery ID");
-    if (manifest) validate2({ runId, kind: manifest.kind, config: null, members: manifest.members });
-    const hash9 = hashOf({ op: "reconcile", runId, recoveryId, manifest: manifest ?? null }), identity = await this.identity();
-    await this.commit((runs) => {
-      let r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
-      if (r?.commands[commandId]) {
-        if (r.commands[commandId].hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
-        return;
-      }
-      if (!r) {
-        if (!manifest) throw new IllegalArgumentError(`run ${runId} is not in this journal; name its kind and Members`);
-        if (Object.keys(runs).length >= MAX_RUNS) throw new ResourceExhausted("run journal is full");
-        runs[runId] = { spec: { runId, kind: manifest.kind, config: null, members: [...manifest.members] }, revision: 0, state: "preparing", at: this.now(), tuples: {}, issued: [], commands: {} };
-        r = runs[runId];
-      } else if (manifest && canonicalJson([manifest.kind, manifest.members]) !== canonicalJson([r.spec.kind, r.spec.members])) throw new RunGateConflict("the manifest differs from the journal; review the journal first");
-      if (r.recovery?.id === recoveryId) {
-        r.commands[commandId] = { hash: hash9, kind: "reconcile", revision: r.revision };
-        return;
-      }
-      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
-      const abandoned = r.pending ? { commandId: r.pending.commandId, kind: r.pending.kind, revision: r.pending.revision } : r.recovery?.abandoned;
-      delete r.pending;
-      r.recovery = { id: recoveryId, commandId, stage: "gathering", views: {}, errors: {}, ...identity ? { identity } : {}, ...abandoned ? { abandoned } : {} };
-      r.commands[commandId] = { hash: hash9, kind: "reconcile", revision: r.revision };
-    });
-    return this.advance(runId);
-  }
-  /**
-   * The admin decision after `needsReview` (resolveRunRecovery). It is bound to the reviewed views by their hash;
-   * every Member step compares and sets the reviewed gate state. `resume` first completes a pause barrier and is
-   * refused if any evidence shows the run stopped.
-   */
-  async resolve(commandId, runId, o) {
-    if (!ID.test(commandId) || !["pause", "stop", "resume"].includes(o?.decision) || typeof o.expectedViewHash !== "string") throw new IllegalArgumentError("invalid recovery decision");
-    const hash9 = hashOf({ op: "resolve", runId, ...o }), identity = await this.identity();
-    await this.commit((runs) => {
-      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
-      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
-      if (r.commands[commandId]) {
-        if (r.commands[commandId].hash !== hash9) throw new IllegalArgumentError("command ID was used for another command");
-        return;
-      }
-      const q = r.recovery;
-      if (!q || q.stage !== "review") throw new RunGateConflict(`run ${runId} has no recovery waiting for a decision`);
-      if (q.viewHash !== o.expectedViewHash) throw new RunGateConflict("the recovery views changed; review again");
-      const views = r.spec.members.map((m) => q.views[m]);
-      if (o.decision === "resume" && (r.state === "stopped" || views.some((v) => v.stopped))) throw new RunGateConflict("a stopped run is never resumed");
-      if (o.decision !== "stop" && views.some((v) => !v.present || v.gate.state === "preparing")) throw new RunGateConflict("Members without a prepared gate allow only stop");
-      if (Object.keys(r.commands).length >= MAX_COMMANDS) throw new ResourceExhausted("run command history is full");
-      const revision2 = Math.max(r.revision, q.abandoned?.revision ?? 0, ...views.map((v) => v.maxRevision)) + 1;
-      r.pending = issue(r, { commandId, kind: o.decision === "stop" ? "stop" : "pause", revision: revision2, acks: {}, errors: {}, recoveryId: q.id, expect: Object.fromEntries(views.filter((v) => v.present).map((v) => [v.spaceId, { revision: v.gate.revision, state: v.gate.state }])), ...o.decision === "resume" ? { then: "resume" } : {}, ...identity ? { identity } : {} });
-      q.stage = "deciding";
-      q.decision = { commandId, decision: o.decision, viewHash: o.expectedViewHash, auto: false };
-      r.commands[commandId] = { hash: hash9, kind: "resolve", revision: revision2 };
-    });
-    return this.advance(runId);
-  }
-  async gather(r) {
-    const q = r.recovery, runId = r.spec.runId;
-    for (const spaceId of r.spec.members) {
-      if (q.views[spaceId]?.stable) continue;
-      let view3, error;
-      try {
-        view3 = await this.o.member(spaceId).recover(runId, q.id);
-        if (view3.runId !== runId || view3.recoveryId !== q.id || view3.spaceId !== null && view3.spaceId !== spaceId) throw new TransactionError("recovery view does not match the request");
-      } catch (e) {
-        view3 = void 0;
-        error = String(e?.message ?? e).slice(0, 256);
-      }
-      await this.commit((runs) => {
-        const cur = runs[runId].recovery;
-        if (!cur || cur.id !== q.id || cur.stage !== "gathering") return;
-        if (view3) {
-          cur.views[spaceId] = plain(view3);
-          delete cur.errors[spaceId];
-        } else cur.errors[spaceId] = error;
-      });
-    }
-    return this.commit((runs) => {
-      const cur = runs[runId], q2 = cur.recovery;
-      if (!q2 || q2.stage !== "gathering") return "again";
-      if (!cur.spec.members.every((m) => q2.views[m]?.stable)) return "wait";
-      const views = cur.spec.members.map((m) => q2.views[m]);
-      cur.tuples = Object.fromEntries(views.map((v) => [v.spaceId ?? "", { incarnation: v.incarnation, authorityId: v.authorityId }]));
-      const states = new Set(views.map((v) => v.gate?.state ?? "missing"));
-      const state = [...states][0];
-      const clean = views.every((v) => v.present && !v.fence && (!v.restored || !v.restored.fence && v.restored.state === v.gate.state && v.restored.revision === v.gate.revision));
-      const known = views.every((v) => cur.issued.includes(v.gate?.commandId ?? "") || (cur.resolved ?? []).some((x) => v.gate?.commandId === x.id));
-      const stopped = cur.state === "stopped" || views.some((v) => v.stopped);
-      if (clean && known && !q2.abandoned && states.size === 1 && (state === "stopped" || state === "paused" && !stopped)) {
-        const revision2 = Math.max(cur.revision, ...views.map((v) => v.maxRevision)) + 1, commandId = `${q2.id}:confirm`;
-        cur.pending = issue(cur, { commandId, kind: state === "paused" ? "pause" : "stop", revision: revision2, acks: {}, errors: {}, recoveryId: q2.id, expect: Object.fromEntries(views.map((v) => [v.spaceId, { revision: v.gate.revision, state: v.gate.state }])), ...q2.identity ? { identity: q2.identity } : {} });
-        q2.stage = "deciding";
-        q2.decision = { commandId, decision: state === "paused" ? "pause" : "stop", viewHash: null, auto: true };
-        return "again";
-      }
-      q2.stage = "review";
-      q2.viewHash = viewHash(cur, q2.views);
-      return "wait";
-    });
-  }
-  /**
-   * Sends the pending command to every Member that has not applied it and records the answers. Safe to repeat at
-   * any time, also after a restart. Fenced Members finish their bound transactions first; call again later.
-   * A transition issued under another control authority or incarnation is never resent, and a Member under a restore
-   * recovery takes no ordinary command: both start `reconcile` automatically (fence and gather only; decisions stay
-   * with `resolve` unless the views are unambiguous).
-   */
-  async advance(runId) {
-    for (; ; ) {
-      const r = await this.commit((runs) => plain(Object.hasOwn(runs, runId) ? runs[runId] : void 0));
-      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
-      const identity = await this.identity();
-      const issuedUnder = r.pending?.identity ?? r.recovery?.identity;
-      if (identity && issuedUnder && !sameIdentity(identity, issuedUnder)) {
-        const id3 = ("control-" + String(identity.incarnation ?? "unknown")).replace(/[^a-zA-Z0-9._:-]/g, "-").slice(0, 90);
-        return this.reconcile(`auto-${id3}`, runId, id3);
-      }
-      if (r.recovery?.stage === "required" || r.recovery?.stage === "review") return viewOf(r);
-      if (r.recovery?.stage === "gathering") {
-        if (await this.gather(r) === "again") continue;
-        return await this.status(runId);
-      }
-      const p = r.pending;
-      if (!p) {
-        if ((r.schedules ?? []).some((x) => x.at <= this.now())) {
-          await this.dueSchedules(runId);
-          return await this.status(runId);
-        }
-        return viewOf(r);
-      }
-      for (const spaceId of r.spec.members) {
-        if (p.acks[spaceId]?.phase === "applied") continue;
-        const command = { runId, commandId: p.commandId, kind: p.kind, revision: p.revision, ...p.recoveryId ? { recoveryId: p.recoveryId } : {}, ...p.expect?.[spaceId] ? { expect: p.expect[spaceId] } : {} };
-        let ack, error;
-        try {
-          const member = this.o.member(spaceId);
-          ack = p.kind === "prepare" ? await member.prepare(r.spec, command) : await member.gate(command);
-          if (ack.spaceId !== spaceId || ack.runId !== runId || ack.revision !== p.revision || ack.commandId !== p.commandId || ack.kind !== p.kind) throw new TransactionError("ACK does not match the command");
-        } catch (e) {
-          ack = void 0;
-          error = String(e?.message ?? e).slice(0, 256);
-        }
-        await this.commit((runs) => {
-          const cur = runs[runId], q = cur.pending;
-          if (!q || q.commandId !== p.commandId) return;
-          if (ack) {
-            const tuple = cur.tuples[spaceId];
-            if (tuple && (tuple.incarnation !== ack.incarnation || tuple.authorityId !== ack.authorityId)) {
-              q.errors[spaceId] = "Member incarnation or authority changed; recovery review required";
-              return;
-            }
-            cur.tuples[spaceId] ??= { incarnation: ack.incarnation, authorityId: ack.authorityId };
-            q.acks[spaceId] = plain(ack);
-            delete q.errors[spaceId];
-          } else if (q.recoveryId && /review again|belongs to another command|under recovery/.test(error) && cur.recovery?.id === q.recoveryId) {
-            cur.recovery.partial = cur.spec.members.filter((m) => q.acks[m]?.phase === "applied");
-            cur.recovery.changed = { ...cur.recovery.changed ?? {}, [spaceId]: error };
-            cur.recovery.stage = "gathering";
-            cur.recovery.views = {};
-            delete cur.recovery.viewHash;
-            delete cur.recovery.decision;
-            delete cur.pending;
-          } else q.errors[spaceId] = error;
-        });
-        if (!await this.commit((runs) => runs[runId].pending?.commandId === p.commandId)) break;
-      }
-      const fenced = !p.recoveryId && (await this.commit((runs) => Object.values(runs[runId].pending?.errors ?? {}))).map((e) => /is under recovery ([a-zA-Z0-9._:-]+);/.exec(e)?.[1]).find(Boolean);
-      if (fenced) return this.reconcile(`auto-${fenced}`.slice(0, 96), runId, fenced);
-      const next = await this.commit((runs) => {
-        const cur = runs[runId], q = cur.pending;
-        if (!q || q.commandId !== p.commandId) return "again";
-        if (!cur.spec.members.every((m) => q.acks[m]?.phase === "applied")) return "wait";
-        const states = new Set(cur.spec.members.map((m) => q.acks[m].state));
-        if (states.size !== 1) {
-          q.errors["*"] = `Members confirmed different states: ${[...states].join(", ")}`;
-          return "wait";
-        }
-        cur.revision = q.revision;
-        cur.state = [...states][0];
-        delete cur.pending;
-        if (q.recoveryId && cur.recovery?.id === q.recoveryId) {
-          cur.resolved ??= [];
-          cur.resolved.push({ id: q.commandId, decision: cur.recovery.decision?.decision ?? (q.kind === "stop" ? "stop" : "pause"), auto: !!cur.recovery.decision?.auto });
-          if (cur.resolved.length > 32) cur.resolved.splice(0, cur.resolved.length - 32);
-          delete cur.recovery;
-        }
-        if (q.kind === "prepare") cur.pending = issue(cur, { commandId: `${q.commandId}:release`, kind: "release", revision: q.revision + 1, acks: {}, errors: {}, ...q.identity ? { identity: q.identity } : {} });
-        if (q.then === "resume") cur.pending = issue(cur, { commandId: `${q.commandId}:resume`, kind: "resume", revision: q.revision + 1, acks: {}, errors: {}, ...q.identity ? { identity: q.identity } : {} });
-        return cur.pending ? "again" : "done";
-      });
-      if (next !== "again") return await this.status(runId);
-    }
-  }
-  async status(runId) {
-    return this.commit((runs) => Object.hasOwn(runs, runId) ? viewOf(runs[runId]) : null);
-  }
-  /**
-   * Plan preview (dry run) of a start or transition: whether it would be accepted now and with which revision.
-   * Nothing is journaled or sent; the real command can still be refused if the state changes meanwhile.
-   */
-  async preview(kind, runId, spec) {
-    try {
-      if (kind === "start") validate2(spec);
-    } catch (e) {
-      return { allowed: false, reason: e.message };
-    }
-    const view3 = await this.status(runId);
-    if (kind === "start") return view3 ? { allowed: false, reason: `run ${runId} exists (${view3.state})`, state: view3.state } : { allowed: true, revision: 1 };
-    if (!view3) return { allowed: false, reason: `unknown run ${runId}` };
-    if (view3.recovery) return { allowed: false, reason: `run is under recovery ${view3.recovery.id}`, state: view3.state };
-    const supersede = kind === "stop" && (view3.pending?.kind === "prepare" || view3.pending?.kind === "release");
-    if (view3.pending && !supersede) return { allowed: false, reason: `still applying ${view3.pending.kind} at revision ${view3.pending.revision}`, state: view3.state };
-    const from = { pause: ["running"], resume: ["paused"], stop: ["preparing", "running", "paused"] }[kind];
-    const confirmed = view3.pending ? "preparing" : view3.state;
-    if (!from.includes(confirmed)) return { allowed: false, reason: `cannot ${kind} while ${view3.state}`, state: view3.state };
-    return { allowed: true, revision: (view3.pending?.revision ?? view3.revision) + 1, state: view3.state };
-  }
-  /** The newest runs (at most `limit`), for overviews such as the mobile Spaces page. */
-  async list(limit = 50) {
-    return this.commit((runs) => Object.values(runs).sort((a, b) => b.at - a.at).slice(0, Math.max(1, Math.min(limit, 200))).map(viewOf));
-  }
-  /** Runs with work left for the server-side loop: a transition waiting for ACKs or a recovery gathering views. */
-  async pending() {
-    const now = this.now();
-    return this.commit((runs) => Object.values(runs).filter((r) => r.pending || r.recovery?.stage === "gathering" || (r.schedules ?? []).some((x) => x.at <= now)).map((r) => r.spec.runId));
-  }
-  /**
-   * Schedules a pause or resume (e.g. a maintenance window). At its time the server loop issues it as an ordinary
-   * journaled command with the schedule ID as command ID; a schedule that is not applicable then is dropped and
-   * remembered as skipped. `cancel: true` removes it.
-   */
-  async schedule(commandId, runId, o) {
-    if (!ID.test(commandId) || !["pause", "resume"].includes(o?.kind) || !Number.isSafeInteger(o.at)) throw new IllegalArgumentError("a schedule needs a command ID, pause or resume and a time");
-    return this.commit((runs) => {
-      const r = Object.hasOwn(runs, runId) ? runs[runId] : void 0;
-      if (!r) throw new IllegalArgumentError(`unknown run ${runId}`);
-      r.schedules ??= [];
-      if (o.cancel) r.schedules = r.schedules.filter((x) => x.id !== commandId);
-      else if (!r.schedules.some((x) => x.id === commandId)) {
-        if (r.schedules.length >= 16) throw new ResourceExhausted("at most 16 schedules per run");
-        r.schedules.push({ id: commandId, kind: o.kind, at: o.at });
-        r.schedules.sort((a, b) => a.at - b.at);
-      }
-      return { runId, schedules: plain(r.schedules) };
-    });
-  }
-  /** Issues due schedules (called by the server loop through `advance`). */
-  async dueSchedules(runId) {
-    const now = this.now();
-    const due = await this.commit((runs) => {
-      const r = runs[runId];
-      return r && !r.pending && !r.recovery ? plain((r.schedules ?? []).filter((x) => x.at <= now)) : [];
-    });
-    for (const s of due) {
-      await this.commit((runs) => {
-        const r = runs[runId];
-        r.schedules = (r.schedules ?? []).filter((x) => x.id !== s.id);
-      });
-      try {
-        await this.transition(s.id, runId, s.kind);
-      } catch (e) {
-        if (!(e instanceof IllegalArgumentError || e instanceof TransactionError)) throw e;
-      }
-      return;
-    }
-  }
-  /**
-   * Result export of a run: completeness against the manifest, missing tasks, a manifest hash and a result hash.
-   * A partial result is reported as such; the export never changes the run.
-   */
-  async export(runId) {
-    const view3 = await this.status(runId);
-    if (!view3) throw new IllegalArgumentError(`unknown run ${runId}`);
-    const spec = await this.commit((runs) => plain(runs[runId].spec));
-    const exporter = this.o.exporters?.[spec.kind];
-    if (!exporter || !this.o.space) throw new IllegalArgumentError(`no exporter for run kind ${spec.kind}`);
-    const r = await exporter(spec, this.o.space);
-    return { runId, kind: spec.kind, state: view3.state, manifestHash: hashOf({ runId, kind: spec.kind, config: spec.config, members: spec.members }), ...r, missing: r.missing.slice(0, 50) };
-  }
-};
-function localRunMember(host, ctx, spaceId, prepare, now = Date.now) {
-  const gate = (command) => host.commit(async (tx) => applyRunGate(await spaceDoc(tx, spaceId, now()), now(), command), ctx);
-  return {
-    spaceId,
-    gate,
-    recover: (runId, recoveryId) => host.commit(async (tx) => recoverRunGate(await spaceDoc(tx, spaceId, now()), now(), { runId, recoveryId }), ctx),
-    async prepare(run, command) {
-      const [ack, open3] = await host.commit(async (tx) => {
-        const s = await spaceDoc(tx, spaceId, now()), ack2 = applyRunGate(s, now(), command);
-        return [ack2, runGateView(s, run.runId)?.state === "preparing"];
-      }, ctx);
-      if (open3) await prepare(run, spaceId);
-      return ack;
-    }
-  };
-}
-function runCommands(runs) {
-  const wrap = (f) => async (id3, args) => {
-    try {
-      return await f(id3, args);
-    } catch (e) {
-      if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
-      throw e;
-    }
-  };
-  const run = (args) => String(args.runId ?? "");
-  const or = (kind, f) => async (id3, a) => a.dryRun === true ? { dryRun: true, ...await runs.preview(kind, run(a), kind === "start" ? { runId: run(a), kind: String(a.kind ?? ""), config: a.config ?? null, members: a.members } : void 0) } : wrap(f)(id3, a);
-  return {
-    startRun: or("start", (id3, a) => runs.start(id3, { runId: run(a), kind: String(a.kind ?? ""), config: a.config ?? null, members: a.members })),
-    pauseRun: or("pause", (id3, a) => runs.pause(id3, run(a))),
-    resumeRun: or("resume", (id3, a) => runs.resume(id3, run(a))),
-    stopRun: or("stop", (id3, a) => runs.stop(id3, run(a))),
-    reconcileRun: wrap((id3, a) => runs.reconcile(id3, run(a), String(a.recoveryId ?? ""), a.members ? { kind: String(a.kind ?? ""), members: a.members } : void 0)),
-    resolveRunRecovery: wrap((id3, a) => runs.resolve(id3, run(a), { expectedViewHash: String(a.expectedViewHash ?? ""), decision: a.decision })),
-    // Read-only views for admins; they change nothing.
-    listRuns: async (_id, a) => await runs.list(Number(a.limit ?? 50)),
-    runStatus: async (_id, a) => await runs.status(run(a)) ?? { phase: "failed", error: `unknown run ${run(a)}` },
-    scheduleRun: wrap(async (id3, a) => await runs.schedule(String(a.scheduleId ?? id3), run(a), { kind: a.kind, at: Number(a.at), cancel: a.cancel === true })),
-    exportRun: wrap(async (_id, a) => await runs.export(run(a)))
-  };
-}
-
-// src/run-member.ts
-init_core();
-var RECOVER_TTL_MS = 6e4;
-var bytes7 = (kind, v) => Buffer.from(`phi-spaces/run-gate-${kind}/v1
-` + canonicalJson(v));
-async function signRun(kind, value, issuer, signer) {
-  return { value: plain(value), issuer, algorithm: signer.algorithm, signature: await signatureOf(signer, bytes7(kind, value)) };
-}
-function verifyRun(kind, t, pin) {
-  if (!signedBy(t, pin, bytes7(kind, t?.value))) throw new PermissionError(`invalid run gate ${kind} signature`);
-  return plain(t.value);
-}
-var tasksPreparer = (host, ctx, now = Date.now) => async (run, spaceId) => {
-  const tasks = run.config?.tasks;
-  if (!Array.isArray(tasks) || tasks.length > 64) throw new IllegalArgumentError("a tasks run names at most 64 tasks");
-  await host.commit(async (tx) => {
-    const s = await spaceDoc(tx, spaceId, now());
-    for (const t of tasks) {
-      const fields = { ...t.fields, runId: run.runId };
-      if (!count(s, now(), { type: t.type, fields })) write(s, now(), { type: t.type, fields }, null, FOREVER);
-    }
-  }, ctx);
-};
-var RunGateService = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  async apply(t) {
-    const q = verifyRun("instruction", t, this.o.controllerPin);
-    if (q.authorityId !== this.o.authorityId) throw new PermissionError("run gate instruction belongs to another authority");
-    if (typeof q.spaceId !== "string" || !(await listSpaces(this.o.host, this.o.ctx)).some((i) => i.spaceId === q.spaceId)) throw new IllegalArgumentError("run gate instruction names no local Space");
-    if (q.kind === "recover") {
-      if (typeof q.recoveryId !== "string") throw new IllegalArgumentError("recover needs a recovery ID");
-      if (typeof q.expiresAt !== "number" || !(q.expiresAt > (this.o.now ?? Date.now)())) throw new PermissionError("this recovery instruction has expired");
-      await this.o.assertAuthority();
-      const view3 = await localRunMember(this.o.host, this.o.ctx, q.spaceId, async () => {
-      }, this.o.now).recover(q.runId, q.recoveryId);
-      await this.o.assertAuthority();
-      return signRun("ack", view3, this.o.peerId, this.o.signer);
-    }
-    const command = { runId: q.runId, commandId: q.commandId, kind: q.kind, revision: q.revision, ...q.recoveryId !== void 0 ? { recoveryId: q.recoveryId } : {}, ...q.expect !== void 0 ? { expect: q.expect } : {} };
-    let prepare = async () => {
-      throw new IllegalArgumentError("only prepare instructions carry a run");
-    };
-    if (q.kind === "prepare") {
-      const spec = q.spec;
-      if (!spec || spec.runId !== q.runId || !Array.isArray(spec.members) || !spec.members.includes(q.spaceId)) throw new IllegalArgumentError("prepare needs the run's manifest including this Space");
-      const registered = Object.hasOwn(this.o.preparers, spec.kind) ? this.o.preparers[spec.kind] : void 0;
-      if (!registered) throw new IllegalArgumentError(`no registered preparer for run kind ${spec.kind}`);
-      prepare = registered;
-    }
-    await this.o.assertAuthority();
-    const member = localRunMember(this.o.host, this.o.ctx, q.spaceId, prepare, this.o.now);
-    const ack = q.kind === "prepare" ? await member.prepare(q.spec, command) : await member.gate(command);
-    await this.o.assertAuthority();
-    return signRun("ack", ack, this.o.peerId, this.o.signer);
-  }
-};
-function remoteRunMember(o) {
-  const call = async (command, spec) => {
-    const q = { ...command, authorityId: o.authorityId, spaceId: o.spaceId, ...spec ? { spec } : {} };
-    const ack = verifyRun("ack", await o.send(await signRun("instruction", q, o.peerId, o.signer)), o.memberPin);
-    if (ack.spaceId !== o.spaceId) throw new PermissionError("run gate ACK names another Space");
-    return ack;
-  };
-  return {
-    spaceId: o.spaceId,
-    prepare: (run, command) => call(command, run),
-    gate: (command) => call(command),
-    recover: (runId, recoveryId) => call({ runId, commandId: recoveryId, kind: "recover", revision: 0, recoveryId, expiresAt: (o.now ?? Date.now)() + RECOVER_TTL_MS })
-  };
-}
-
-// src/space-lifecycle.ts
-init_documents();
-init_types();
-init_claims();
-init_canonical();
-init_grants();
-init_enroll();
-init_spaces();
-init_core();
-var SpaceInUse = class extends TransactionError {
-};
-var ID2 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
-var hashOf2 = digestJson;
-var SpaceLifecycleJournal = defineDoc({
-  kind: "phi-spaces.space-lifecycle",
-  version: 1,
-  scope: "session",
-  initial: () => ({ commands: {} })
-});
-function why(s, now) {
-  if (s.membership && s.membership.state !== "detached") return `it is a federation Member (${s.membership.state}); removeMember first`;
-  if (s.entries.length) return `it still holds ${s.entries.length} entries; export and purge them first`;
-  if (Object.keys(s.txns).length || s.waiters.length || s.regs.length || (s.jobs ?? []).length || (s.releaseQueue ?? []).length) return "it still has open transactions, waits, registrations or follow-up work";
-  const disk = diskMapOf(s.rpc?.claims);
-  if ((disk ? disk.any() : Object.keys(s.rpc?.claims ?? {}).length) || claimPage(s.restoredClaims, null, 1).length) return "it retains request claims until their results expire";
-  if (Object.values(s.mailboxes?.boxes ?? {}).some((b) => b.events.length)) return "mailboxes still hold undelivered results";
-  if (Object.values(s.runGates ?? {}).some((g) => g.state !== "stopped" || g.recovery)) return "a run on it is not stopped";
-  if (s.restore && s.restore.stage !== "completed") return "a restore is in progress";
-  void now;
-  return void 0;
-}
-var SpaceLifecycle = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  async apply(q) {
-    if (!q || !ID2.test(q.commandId) || !["create", "archive", "reactivate", "delete"].includes(q.action)) throw new IllegalArgumentError("invalid Space lifecycle request");
-    if (q.action === "create" ? typeof q.alias !== "string" : typeof q.spaceId !== "string") throw new IllegalArgumentError(q.action === "create" ? "create needs an alias" : `${q.action} needs a spaceId`);
-    const hash9 = hashOf2({ action: q.action, alias: q.alias ?? null, spaceId: q.spaceId ?? null, limits: q.limits ?? null, profiles: q.profiles ?? null });
-    return this.o.host.commit(async (tx) => {
-      const j = await tx.doc(SpaceLifecycleJournal), old = j.commands[q.commandId];
-      if (old) {
-        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another lifecycle request");
-        return plain(old.result);
-      }
-      if (Object.keys(j.commands).length >= 4096) throw new ResourceExhausted("lifecycle journal is full");
-      const now = (this.o.now ?? Date.now)(), r = await tx.doc(Registry);
-      let result;
-      if (q.action === "create") {
-        const existed = Object.hasOwn(r.aliases, q.alias);
-        const info = await createSpace(tx, q.alias, now);
-        const s = await spaceDoc(tx, info.spaceId, now);
-        if (existed && s.archived) throw new RunGateConflict(`alias ${q.alias} names an archived Space; reactivate it instead`);
-        if (!existed) {
-          if (q.limits) setLimits(s, q.limits, now);
-          if (q.profiles) setCompletionProfiles(s, q.profiles, now);
-        } else if (q.limits && canonicalJson(limitsOf(s)) !== canonicalJson({ ...limitsOf(s), ...q.limits }) || q.profiles && canonicalJson(s.completionProfiles ?? []) !== canonicalJson(q.profiles)) throw new RunGateConflict(`Space ${q.alias} exists with other limits or profiles; it is reused only unchanged`);
-        result = { commandId: q.commandId, action: "create", spaceId: info.spaceId, alias: info.alias, state: "active", ...existed ? { existed: true } : {} };
-      } else {
-        const info = r.spaces[q.spaceId];
-        if (!info || info.deletedAt) throw new IllegalArgumentError(`no Space ${q.spaceId} on this host`);
-        if (info.spaceId === r.defaultSpaceId || info.alias === DEFAULT_ALIAS || info.alias === CONTROL_SPACE) throw new PermissionError("the default and the control Space have no lifecycle");
-        const s = await spaceDoc(tx, info.spaceId, now);
-        settle(s, now);
-        if (q.action === "archive") {
-          if (!s.archived) {
-            const reason = s.membership && s.membership.state !== "detached" ? `it is a federation Member (${s.membership.state}); removeMember first` : Object.keys(s.txns).length ? "it has open transactions" : Object.values(s.runGates ?? {}).some((g) => g.state !== "stopped") ? "a run on it is not stopped" : void 0;
-            if (reason) throw new SpaceInUse(`cannot archive: ${reason}`);
-            s.archived = { at: now, commandId: q.commandId };
-            touch2(s, now);
-          }
-          result = { commandId: q.commandId, action: "archive", spaceId: info.spaceId, alias: info.alias, state: "archived" };
-        } else if (q.action === "reactivate") {
-          if (s.archived) {
-            delete s.archived;
-            touch2(s, now);
-          }
-          result = { commandId: q.commandId, action: "reactivate", spaceId: info.spaceId, alias: info.alias, state: "active" };
-        } else {
-          if (!s.archived) throw new SpaceInUse("cannot delete: archive the Space first");
-          const reason = why(s, now);
-          if (reason) throw new SpaceInUse(`cannot delete: ${reason}`);
-          delete r.aliases[info.alias];
-          r.spaces[info.spaceId] = { ...info, deletedAt: now };
-          result = { commandId: q.commandId, action: "delete", spaceId: info.spaceId, alias: info.alias, state: "deleted" };
-        }
-      }
-      j.commands[q.commandId] = { hash: hash9, result };
-      return plain(result);
-    }, this.o.ctx);
-  }
-};
-var bytes8 = (kind, v) => Buffer.from(`phi-spaces/space-lifecycle-${kind}/v1
-` + canonicalJson(v));
-async function signLifecycle(kind, value, issuer, signer) {
-  return { value: plain(value), issuer, algorithm: signer.algorithm, signature: await signatureOf(signer, bytes8(kind, value)) };
-}
-function verifyLifecycle(kind, t, pin) {
-  if (!signedBy(t, pin, bytes8(kind, t?.value))) throw new PermissionError(`invalid Space lifecycle ${kind} signature`);
-  return plain(t.value);
-}
-var SpaceLifecycleService = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  async apply(t) {
-    const q = verifyLifecycle("instruction", t, this.o.controlPin);
-    if (q.authorityId !== this.o.authorityId || q.hostId !== this.o.hostId) throw new PermissionError("Space lifecycle instruction belongs to another authority or host");
-    await this.o.assertAuthority();
-    const { authorityId: _a, hostId: _h, ...request } = q;
-    const result = await this.o.lifecycle.apply(request);
-    await this.o.assertAuthority();
-    return signLifecycle("result", result, this.o.peerId, this.o.signer);
-  }
-};
-function spaceCommands(o) {
-  const run = (action) => async (commandId, a) => {
-    const hostId = String(a.hostId ?? "");
-    const q = { commandId, action, authorityId: o.authorityId, hostId, ...action === "create" ? { alias: String(a.alias ?? "") } : { spaceId: String(a.spaceId ?? "") }, ...a.limits ? { limits: a.limits } : {}, ...a.profiles ? { profiles: a.profiles } : {} };
-    let reply2;
-    try {
-      reply2 = await o.send(hostId, await signLifecycle("instruction", q, o.peerId, o.signer));
-    } catch (e) {
-      const m = String(e?.message ?? e);
-      if (/cannot (archive|delete)|IllegalArgument|invalid|no Space|exists with other|names an archived|have no lifecycle|another authority|was used for another/.test(m)) return { phase: "failed", error: m.slice(0, 512) };
-      throw e;
-    }
-    const result = verifyLifecycle("result", reply2, await o.hostPin(hostId));
-    if (result.commandId !== commandId || result.action !== action) throw new PermissionError("Space lifecycle result does not match the command");
-    return result;
-  };
-  return { createSpace: run("create"), archiveSpace: run("archive"), reactivateSpace: run("reactivate"), deleteSpace: run("delete") };
-}
 
 // src/store/sync-sqlite.ts
 init_canonical();
@@ -14417,10 +15326,10 @@ init_canonical();
 init_grants();
 import { randomBytes as randomBytes11 } from "node:crypto";
 var DOMAIN2 = { request: "phi-spaces/replica-sync/v1/request\n", response: "phi-spaces/replica-sync/v1/response\n" };
-var bytes9 = (kind, v) => Buffer.from(DOMAIN2[kind] + canonicalJson(v));
+var bytes11 = (kind, v) => Buffer.from(DOMAIN2[kind] + canonicalJson(v));
 var digest2 = (v) => digestJson(v ?? null);
-var sign2 = async (kind, value, signer) => ({ value, signature: Buffer.from(await signer.sign(bytes9(kind, value))).toString("base64") });
-var verify2 = (kind, s, pin) => !!s && typeof s.signature === "string" && verifyDetached(pin.algorithm, pin.publicKey, bytes9(kind, s.value), s.signature);
+var sign2 = async (kind, value, signer) => ({ value, signature: Buffer.from(await signer.sign(bytes11(kind, value))).toString("base64") });
+var verify2 = (kind, s, pin) => !!s && typeof s.signature === "string" && verifyDetached(pin.algorithm, pin.publicKey, bytes11(kind, s.value), s.signature);
 var ReplicaTransportRefused = class extends Error {
 };
 var StandbyRefused = class extends PrimarySyncBlocked {
@@ -14662,546 +15571,8 @@ function sealedResolver(o) {
 init_grants();
 init_enroll();
 
-// src/workers.ts
-init_documents();
-init_canonical();
-init_client();
-init_grants();
-init_spaces();
-init_core();
-var ID3 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
-var MAX_COUNT = 64;
-var MAX_PER_HOST = 32;
-var MAX_ASSIGNMENTS = 1024;
-var MAX_COMMANDS2 = 1024;
-var bytes10 = (v) => Buffer.from("phi-spaces/worker-assignments/v1\n" + canonicalJson(v));
-var hashOf3 = digestJson;
-function verifyWorkers(t, pin) {
-  if (!signedBy(t, pin, bytes10(t?.value))) throw new PermissionError("invalid worker assignment signature");
-  return plain(t.value);
-}
-var WorkerJournal = defineDoc({
-  kind: "phi-spaces.worker-assignments",
-  version: 1,
-  scope: "session",
-  initial: () => ({ generation: 0, assignments: {}, commands: {} })
-});
-var WorkerAssignments = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  /** count 0 stops every worker of the assignment after its current task; the assignment stays as the stop instruction. */
-  async set(commandId, a) {
-    if (!ID3.test(commandId) || !a || ![a.assignmentId, a.hostId, a.kind, a.targetSpace].every((v) => typeof v === "string" && ID3.test(v)) || a.runId !== void 0 && !ID3.test(a.runId) || !Number.isSafeInteger(a.count) || a.count < 0 || a.count > MAX_COUNT) throw new IllegalArgumentError(`a worker assignment needs IDs, a kind, a target Space and a count 0..${MAX_COUNT}`);
-    const input = { assignmentId: a.assignmentId, hostId: a.hostId, kind: a.kind, targetSpace: a.targetSpace, count: a.count, ...a.runId !== void 0 ? { runId: a.runId } : {} };
-    const hash9 = hashOf3(input);
-    return this.o.host.commit(async (tx) => {
-      const d = await tx.doc(WorkerJournal);
-      const old = d.commands[commandId];
-      if (old) {
-        if (old.hash !== hash9) throw new IllegalArgumentError("command ID was used for another worker assignment");
-        return plain(d.assignments[a.assignmentId] ?? { ...input, generation: old.generation });
-      }
-      const prior = d.assignments[a.assignmentId];
-      if (prior && prior.hostId !== a.hostId) throw new RunGateConflict("an assignment keeps its host; stop it and create another");
-      if (!prior && (Object.keys(d.assignments).length >= MAX_ASSIGNMENTS || Object.values(d.assignments).filter((x) => x.hostId === a.hostId).length >= MAX_PER_HOST)) throw new ResourceExhausted("worker assignment directory is full");
-      if (Object.keys(d.commands).length >= MAX_COMMANDS2) throw new ResourceExhausted("worker command history is full");
-      d.generation++;
-      d.assignments[a.assignmentId] = { ...input, generation: d.generation };
-      d.commands[commandId] = { hash: hash9, generation: d.generation };
-      return plain(d.assignments[a.assignmentId]);
-    }, this.o.ctx);
-  }
-  /** The signed list of one host. `hostId` must come from the authenticated connection, never from the request. */
-  async forHost(hostId) {
-    const d = await this.o.host.snapshot(WorkerJournal, this.o.ctx);
-    const incarnation = this.o.identity ? (await this.o.identity()).incarnation : null;
-    const value = { authorityId: this.o.authorityId, incarnation, hostId, generation: d?.generation ?? 0, assignments: Object.values(d?.assignments ?? {}).filter((a) => a.hostId === hostId).sort((x, y) => x.assignmentId.localeCompare(y.assignmentId)) };
-    return { value, issuer: this.o.peerId, algorithm: this.o.signer.algorithm, signature: Buffer.from(await this.o.signer.sign(bytes10(value))).toString("base64") };
-  }
-  async list() {
-    const d = await this.o.host.snapshot(WorkerJournal, this.o.ctx);
-    return { generation: d?.generation ?? 0, assignments: Object.values(d?.assignments ?? {}).map((a) => plain(a)) };
-  }
-};
-function appliedWorkers(control2, now) {
-  const out = {};
-  for (const e of list(control2, now, { type: "Capability" })) {
-    const f = e.fields, w = f.metrics?.workers;
-    if (typeof f.hostId === "string" && w && typeof w === "object" && (!out[f.hostId] || out[f.hostId].at < Number(f.at))) out[f.hostId] = { at: Number(f.at), workers: plain(w) };
-  }
-  return out;
-}
-var WorkerState = defineDoc({
-  kind: "phi-spaces.worker-supervisor",
-  version: 1,
-  scope: "session",
-  initial: () => ({ authorityId: null, incarnation: null, generation: 0, assignments: [] })
-});
-var abortableSleep = (ms2, signal) => new Promise((resolve2) => {
-  if (signal.aborted) return resolve2();
-  const t = setTimeout(done, ms2);
-  function done() {
-    clearTimeout(t);
-    signal.removeEventListener("abort", done);
-    resolve2();
-  }
-  signal.addEventListener("abort", done, { once: true });
-});
-var WorkerSupervisor = class {
-  o;
-  running = /* @__PURE__ */ new Map();
-  rejected = /* @__PURE__ */ new Map();
-  blocked;
-  fetchError;
-  constructor(o) {
-    this.o = o;
-  }
-  now() {
-    return (this.o.now ?? Date.now)();
-  }
-  /** One pass: fetch and verify the host's list, persist an acceptable one, then scale the loops to it. */
-  async reconcile() {
-    let list2;
-    try {
-      list2 = verifyWorkers(await this.o.fetch(), this.o.controllerPin);
-      if (list2.hostId !== this.o.hostId || list2.authorityId !== this.o.authorityId) throw new PermissionError("worker list belongs to another host or authority");
-      if (!Array.isArray(list2.assignments) || list2.assignments.some((a) => a.hostId !== this.o.hostId)) throw new PermissionError("worker list contains another host's assignment");
-      this.fetchError = void 0;
-    } catch (e) {
-      list2 = void 0;
-      this.fetchError = String(e?.message ?? e).slice(0, 256);
-    }
-    const accepted = await this.o.host.commit(async (tx) => {
-      const d = await tx.doc(WorkerState);
-      if (list2) {
-        const known = d.generation > 0;
-        if (known && (d.authorityId !== list2.authorityId || d.incarnation !== list2.incarnation)) this.blocked = `control identity changed (${d.incarnation} -> ${list2.incarnation}); accept it explicitly with acceptControlIdentity`;
-        else {
-          this.blocked = void 0;
-          if (!known || list2.generation > d.generation) {
-            d.authorityId = list2.authorityId;
-            d.incarnation = list2.incarnation;
-            d.generation = list2.generation;
-            d.assignments = plain(list2.assignments);
-          }
-        }
-      }
-      return plain(d);
-    }, this.o.ctx);
-    await this.apply(accepted.assignments);
-    return this.summary(accepted);
-  }
-  /** After a verified Control restore: the next list of this identity is accepted although its generation restarted. */
-  async acceptControlIdentity(incarnation) {
-    await this.o.host.commit(async (tx) => {
-      const d = await tx.doc(WorkerState);
-      d.incarnation = incarnation;
-      d.generation = 0;
-    }, this.o.ctx);
-    this.blocked = void 0;
-  }
-  async apply(specs) {
-    const local = new Set((await listSpaces(this.o.host, this.o.ctx)).map((i) => i.spaceId));
-    const wanted = new Map(specs.map((s) => [s.assignmentId, s]));
-    this.rejected.clear();
-    for (const [id3, r] of this.running) {
-      if (!wanted.has(id3)) {
-        r.spec = { ...r.spec, count: 0 };
-        this.scale(r, 0);
-      }
-      if (!wanted.has(id3) && !r.loops.length && !r.stopping.length) this.running.delete(id3);
-    }
-    for (const spec of specs) {
-      const kind = Object.hasOwn(this.o.kinds, spec.kind) ? this.o.kinds[spec.kind] : void 0;
-      const reason = !kind ? `no registered worker kind ${spec.kind}` : !local.has(spec.targetSpace) ? `target Space ${spec.targetSpace} is not on this host` : kind.requiresRun && !spec.runId ? `worker kind ${spec.kind} needs a runId` : void 0;
-      let r = this.running.get(spec.assignmentId);
-      if (reason) {
-        this.rejected.set(spec.assignmentId, reason);
-        if (r) this.scale(r, 0);
-        continue;
-      }
-      const old = r;
-      if (r && (r.spec.kind !== spec.kind || r.spec.targetSpace !== spec.targetSpace || r.spec.runId !== spec.runId)) {
-        this.scale(r, 0);
-        r = void 0;
-      }
-      if (!r) {
-        r = { spec, loops: [], stopping: old?.stopping ?? [], tasks: 0, errors: 0 };
-        this.running.set(spec.assignmentId, r);
-      }
-      r.spec = spec;
-      this.scale(r, spec.count);
-    }
-  }
-  scale(r, count2) {
-    while (r.loops.length > count2) {
-      const l = r.loops.pop(), list2 = r.stopping;
-      l.ctrl.abort();
-      list2.push(l);
-      void l.done.finally(() => {
-        const i = list2.indexOf(l);
-        if (i >= 0) list2.splice(i, 1);
-      });
-    }
-    while (r.loops.length < count2) {
-      const ctrl = new AbortController(), loop = { ctrl, done: Promise.resolve() };
-      loop.done = this.loop(r, ctrl.signal);
-      r.loops.push(loop);
-    }
-  }
-  /** Stop is checked between steps (a task is never cut off); a wait for work is interrupted at once. */
-  async loop(r, signal) {
-    const kind = this.o.kinds[r.spec.kind], spec = r.spec;
-    const space = (this.o.space ?? ((id3) => new PhiSpaces(this.o.host, this.o.ctx, this.o.now, void 0, void 0, { space: id3 })))(spec.targetSpace);
-    const sleep2 = this.o.sleep ?? abortableSleep, { minMs, maxMs } = this.o.backoff ?? { minMs: 100, maxMs: 5e3 };
-    let delay = 0;
-    while (!signal.aborted) {
-      try {
-        if (await kind.step({ space, spaceId: spec.targetSpace, ...spec.runId ? { runId: spec.runId } : {}, signal })) {
-          r.tasks++;
-          delay = 0;
-          await new Promise((res) => setImmediate(res));
-          continue;
-        }
-      } catch (e) {
-        r.errors++;
-        r.lastError = String(e?.message ?? e).slice(0, 256);
-      }
-      delay = Math.min(maxMs, Math.max(minMs, delay * 2));
-      await sleep2(delay, signal);
-    }
-  }
-  summary(state) {
-    const assignments = {};
-    for (const [id3, r] of this.running) assignments[id3] = { kind: r.spec.kind, targetSpace: r.spec.targetSpace, ...r.spec.runId ? { runId: r.spec.runId } : {}, desired: r.spec.count, active: r.loops.length, stopping: r.stopping.length, tasks: r.tasks, errors: r.errors, ...r.lastError ? { lastError: r.lastError } : {} };
-    for (const [id3, reason] of this.rejected) assignments[id3] = { ...assignments[id3] ?? { kind: "?", targetSpace: "?", desired: 0, active: 0, stopping: 0, tasks: 0, errors: 0 }, rejected: reason };
-    return { authorityId: state?.authorityId ?? null, incarnation: state?.incarnation ?? null, generation: state?.generation ?? 0, at: this.now(), ...this.blocked ? { blocked: this.blocked } : {}, ...this.fetchError ? { fetchError: this.fetchError } : {}, assignments };
-  }
-  /** Stops every loop after its current step and waits for them. */
-  async stop() {
-    const all = [...this.running.values()].flatMap((r) => {
-      this.scale(r, 0);
-      return r.stopping.map((l) => l.done);
-    });
-    await Promise.allSettled(all);
-    this.running.clear();
-  }
-};
-function startWorkerSupervisor(s, o = {}) {
-  let stopped = false, timer, active2 = Promise.resolve();
-  const run = () => {
-    active2 = s.reconcile().then((sum) => o.publish?.(sum)).catch(o.onError ?? (() => {
-    })).then(() => {
-      if (!stopped) timer = setTimeout(run, o.intervalMs ?? 15e3);
-    });
-  };
-  run();
-  return async () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
-    await active2;
-    await s.stop();
-  };
-}
-function workerCommands(w, applied) {
-  return {
-    /** Read-only: desired assignments and the last applied state per host (with its age). */
-    async listWorkers() {
-      const d = await w.list();
-      return { ...d, applied: applied ? await applied() : {} };
-    },
-    async setWorkers(id3, a) {
-      try {
-        return await w.set(id3, { assignmentId: String(a.assignmentId ?? ""), hostId: String(a.hostId ?? ""), kind: String(a.kind ?? ""), targetSpace: String(a.targetSpace ?? ""), count: Number(a.count), ...a.runId !== void 0 && a.runId !== null ? { runId: String(a.runId) } : {} });
-      } catch (e) {
-        if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
-        throw e;
-      }
-    }
-  };
-}
-
 // src/runtime.ts
 init_enroll();
-
-// src/deployment.ts
-init_documents();
-init_canonical();
-init_spaces();
-init_core();
-var ALIAS2 = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-var ID4 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/;
-var SECRET_KEY = /token|secret|password|passwd|private|apikey|api_key|bearer|seed|mnemonic/i;
-var hashOf4 = digestJson;
-var sub = (...parts) => "dep-" + hashOf4(parts).slice(0, 40);
-function validateDeployment(raw) {
-  const errors = [];
-  const scan = (v, path) => {
-    if (typeof v === "string" && (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(v) || /^(sk|pk|ghp|xox[bp])[-_][A-Za-z0-9]{16,}/.test(v))) errors.push(`${path}: looks like a secret; keep credentials in the host secret store`);
-    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
-      if (SECRET_KEY.test(k)) errors.push(`${path}.${k}: secret fields are not allowed in the config`);
-      scan(x, `${path}.${k}`);
-    }
-  };
-  scan(raw, "$");
-  const c = raw;
-  if (!c || typeof c !== "object" || Array.isArray(c)) return { errors: ["config must be a JSON object"] };
-  const known = ["schemaVersion", "deployment", "configRevision", "coordinator", "hosts", "spaces", "routing", "workers", "mobile", "credentials"];
-  for (const k of Object.keys(c)) if (!known.includes(k)) errors.push(`unknown field ${k}`);
-  if (c.schemaVersion !== 1) errors.push("schemaVersion must be 1");
-  if (typeof c.deployment !== "string" || !ALIAS2.test(c.deployment)) errors.push("deployment: lower-case alias required");
-  if (c.configRevision !== void 0 && (!Number.isSafeInteger(c.configRevision) || c.configRevision < 1)) errors.push("configRevision must be a positive integer");
-  const hosts2 = Array.isArray(c.hosts) ? c.hosts : (errors.push("hosts must be a list"), []);
-  const spaces = Array.isArray(c.spaces) ? c.spaces : (errors.push("spaces must be a list"), []);
-  const workers = c.workers === void 0 ? [] : Array.isArray(c.workers) ? c.workers : (errors.push("workers must be a list"), []);
-  if (hosts2.length > 64 || spaces.length > 128 || workers.length > 128) errors.push("at most 64 hosts, 128 Spaces and 128 workers");
-  const unique = (list2, what) => {
-    const seen = /* @__PURE__ */ new Set();
-    for (const x of list2) {
-      if (!x || typeof x.alias !== "string" || !ALIAS2.test(x.alias)) errors.push(`${what}: invalid alias ${JSON.stringify(x?.alias)}`);
-      else if (seen.has(x.alias)) errors.push(`${what}: duplicate alias ${x.alias}`);
-      else seen.add(x.alias);
-    }
-    return seen;
-  };
-  const hostAliases = unique(hosts2, "hosts"), spaceAliases = unique(spaces, "spaces");
-  unique(workers, "workers");
-  for (const h of hosts2) if (h && !["coordinator", "member-host"].includes(h.role)) errors.push(`hosts.${h.alias}: role must be coordinator or member-host`);
-  if (!hostAliases.has(c.coordinator)) errors.push("coordinator must name a host");
-  else if (hosts2.find((h) => h.alias === c.coordinator)?.role !== "coordinator" || hosts2.filter((h) => h.role === "coordinator").length !== 1) errors.push("exactly the coordinator host has role coordinator");
-  for (const s of spaces) {
-    if (!s) continue;
-    if (!hostAliases.has(s.host)) errors.push(`spaces.${s.alias}: unknown host ${s.host}`);
-    if (!["control", "data"].includes(s.purpose)) errors.push(`spaces.${s.alias}: purpose must be control or data`);
-    if (s.purpose === "control" && s.host !== c.coordinator) errors.push(`spaces.${s.alias}: the control Space lives on the coordinator`);
-    if (s.maxSpaceBytes !== void 0 && (!Number.isSafeInteger(s.maxSpaceBytes) || s.maxSpaceBytes < 1024)) errors.push(`spaces.${s.alias}: maxSpaceBytes must be an integer of at least 1024`);
-    if (s.limits !== void 0 && (typeof s.limits !== "object" || Array.isArray(s.limits))) errors.push(`spaces.${s.alias}: limits must be an object`);
-  }
-  if (spaces.filter((s) => s?.purpose === "control").length !== 1) errors.push("exactly one control Space is required");
-  const dataSpaces = new Set(spaces.filter((s) => s?.purpose === "data").map((s) => s.alias));
-  if (c.routing !== void 0) {
-    const r = c.routing;
-    if (r.profile === "single-member-sieve") {
-      if (!r.member || !dataSpaces.has(r.member)) errors.push("routing.member must name a data Space");
-    } else if (r.profile === "sieve-hrw-by-taskid") {
-      if (!Array.isArray(r.members) || r.members.length < 2 || !r.members.every((m) => dataSpaces.has(m))) errors.push("routing.members must name at least two data Spaces");
-    } else errors.push("routing.profile must be single-member-sieve or sieve-hrw-by-taskid");
-  }
-  for (const w of workers) {
-    if (!w) continue;
-    if (!hostAliases.has(w.host)) errors.push(`workers.${w.alias}: unknown host ${w.host}`);
-    const target = spaces.find((s) => s?.alias === w.targetSpace);
-    if (!target || target.purpose !== "data") errors.push(`workers.${w.alias}: targetSpace must name a data Space`);
-    else if (target.host !== w.host) errors.push(`workers.${w.alias}: workers run on the host of their target Space`);
-    if (typeof w.kind !== "string" || !ID4.test(w.kind)) errors.push(`workers.${w.alias}: invalid kind`);
-    if (!Number.isSafeInteger(w.count) || w.count < 0 || w.count > 64) errors.push(`workers.${w.alias}: count must be 0..64`);
-    if (w.runId !== void 0 && !ID4.test(w.runId)) errors.push(`workers.${w.alias}: invalid runId`);
-  }
-  if (c.credentials !== void 0 && c.credentials.source !== "host-secret-store") errors.push("credentials.source must be host-secret-store");
-  if (errors.length) return { errors };
-  const config = plain(c);
-  return { config, configHash: hashOf4(config), errors };
-}
-var DeploymentState = defineDoc({
-  kind: "phi-spaces.deployment",
-  version: 1,
-  scope: "session",
-  initial: () => ({ hosts: {}, spaces: {}, jobs: {} })
-});
-var DeploymentController = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  now() {
-    return (this.o.now ?? Date.now)();
-  }
-  state() {
-    return this.o.host.snapshot(DeploymentState, this.o.ctx).then((s) => plain(s ?? { hosts: {}, spaces: {}, jobs: {} }));
-  }
-  /** Binds a host alias to an enrolled hostId. An alias never silently moves to another host. */
-  async bindHost(alias, hostId) {
-    if (!ALIAS2.test(alias) || typeof hostId !== "string" || !ID4.test(hostId)) throw new IllegalArgumentError("bindHost needs an alias and a hostId");
-    return this.o.host.commit(async (tx) => {
-      const d = await tx.doc(DeploymentState), old = d.hosts[alias];
-      if (old && old !== hostId) throw new RunGateConflict(`host alias ${alias} is bound to ${old}`);
-      if (Object.entries(d.hosts).some(([a, id3]) => id3 === hostId && a !== alias)) throw new RunGateConflict(`host ${hostId} already has another alias`);
-      d.hosts[alias] = hostId;
-      return { alias, hostId };
-    }, this.o.ctx);
-  }
-  /** What apply would do, without any effect. */
-  async plan(raw) {
-    const v = validateDeployment(raw);
-    if (!v.config) return { deployment: String(raw?.deployment ?? "?"), configHash: "", ready: false, steps: v.errors.map((e, i) => ({ key: `config:${i}`, action: "validate", status: "conflict", detail: e })) };
-    const c = v.config, st = await this.state(), steps = [];
-    for (const h of c.hosts) {
-      const id3 = st.hosts[h.alias];
-      if (!id3) {
-        steps.push({ key: `host:${h.alias}`, action: "bind", status: "blocked", detail: "host alias is not bound to an enrolled host; enroll it, then bindHost" });
-        continue;
-      }
-      const s = await this.o.ports.hostStatus(id3).catch(() => ({ fresh: false }));
-      steps.push({ key: `host:${h.alias}`, action: "check", status: s.fresh ? "ok" : "blocked", detail: s.fresh ? `${id3} reports a fresh heartbeat` : `${id3} has no fresh Capability heartbeat` });
-    }
-    for (const s of c.spaces) {
-      const bound = st.spaces[s.alias];
-      if (s.purpose === "control") {
-        steps.push({ key: `space:${s.alias}`, action: "control", status: bound && bound.spaceId !== this.o.ports.controlSpaceId ? "conflict" : "reuse", detail: "the coordinator's control Space" });
-        continue;
-      }
-      if (bound && bound.host !== s.host) steps.push({ key: `space:${s.alias}`, action: "create", status: "conflict", detail: `alias is bound to ${bound.spaceId} on ${bound.host}; Spaces do not move hosts` });
-      else steps.push({ key: `space:${s.alias}`, action: "create", status: bound ? "reuse" : "create", detail: bound ? `existing ${bound.spaceId}, reused unchanged` : `new Space on ${s.host}` });
-    }
-    if (c.routing) steps.push({ key: "routing", action: "policy", status: "skip", detail: `profile ${c.routing.profile}: membership and policy are applied with addMember/setPolicy (not part of this bootstrap)` });
-    const assigned = this.o.ports.workers ? (await this.o.ports.workers.list()).assignments : [];
-    for (const w of c.workers ?? []) {
-      const key2 = `worker:${w.alias}`;
-      if (!this.o.ports.workers) {
-        steps.push({ key: key2, action: "register", status: "blocked", detail: "no worker assignment directory configured" });
-        continue;
-      }
-      const old = assigned.find((a) => a.assignmentId === `${c.deployment}.${w.alias}`), target = st.spaces[w.targetSpace]?.spaceId;
-      if (!old) steps.push({ key: key2, action: "register", status: "create", detail: `${w.kind} on ${w.host}, registered with count 0; startWorkers sets ${w.count}` });
-      else if (old.hostId === st.hosts[w.host] && old.kind === w.kind && old.targetSpace === target && old.runId === w.runId) steps.push({ key: key2, action: "register", status: "reuse", detail: `unchanged definition; current count ${old.count} is kept` });
-      else if (old.count > 0) steps.push({ key: key2, action: "register", status: "conflict", detail: `definition changed while ${old.count} workers run; stop them (count 0) first` });
-      else steps.push({ key: key2, action: "register", status: "create", detail: "stopped assignment gets the new definition with count 0" });
-    }
-    return { deployment: c.deployment, configHash: v.configHash, ready: !steps.some((s) => s.status === "blocked" || s.status === "conflict"), steps };
-  }
-  /**
-   * Applies a config once per deployment and config hash; a repeated apply resumes the same job. Steps use stable
-   * sub-request IDs, so an unknown outcome is resolved by repeating them. A blocked or conflicting plan changes nothing.
-   */
-  async apply(raw) {
-    const plan = await this.plan(raw);
-    const v = validateDeployment(raw);
-    if (!v.config) return { deployment: plan.deployment, configHash: "", state: "blocked", steps: {}, plan };
-    const c = v.config, key2 = c.deployment;
-    const job = await this.o.host.commit(async (tx) => {
-      const d = await tx.doc(DeploymentState), old = d.jobs[key2];
-      if (old && old.configHash !== v.configHash && old.state === "applying") throw new RunGateConflict(`deployment ${key2} is still applying another config; repeat it until it completes or blocks`);
-      if (!old || old.configHash !== v.configHash) {
-        if (Object.keys(d.jobs).length >= 64 && !old) throw new ResourceExhausted("deployment journal is full");
-        d.jobs[key2] = { deployment: key2, configHash: v.configHash, config: plain(c), state: "applying", steps: {}, at: this.now() };
-      }
-      return plain(d.jobs[key2]);
-    }, this.o.ctx);
-    if (job.state === "completed") return { deployment: key2, configHash: job.configHash, state: job.state, steps: job.steps };
-    if (!plan.ready) {
-      await this.record(key2, job.configHash, (d) => {
-        d.state = "blocked";
-      });
-      return { deployment: key2, configHash: job.configHash, state: "blocked", steps: job.steps, plan };
-    }
-    const st = await this.state();
-    for (const s of c.spaces) {
-      const step = `space:${s.alias}`;
-      if (job.steps[step]?.status === "done") continue;
-      if (s.purpose === "control") {
-        await this.space(key2, job.configHash, s.alias, s.host, this.o.ports.controlSpaceId, step);
-        continue;
-      }
-      const limits = { ...s.limits ?? {}, ...s.maxSpaceBytes ? { maxSpaceBytes: s.maxSpaceBytes } : {} };
-      const r = await this.o.ports.createSpace(sub(key2, job.configHash, "space", s.alias), { hostId: st.hosts[s.host], alias: s.alias, ...Object.keys(limits).length ? { limits } : {}, ...s.profiles ? { profiles: s.profiles } : {} });
-      if (r?.phase === "failed" || typeof r?.spaceId !== "string") {
-        await this.record(key2, job.configHash, (d) => {
-          d.steps[step] = { status: "failed", error: String(r?.error ?? "no spaceId").slice(0, 512) };
-          d.state = "blocked";
-        });
-        return this.view(key2);
-      }
-      await this.space(key2, job.configHash, s.alias, s.host, r.spaceId, step, r);
-    }
-    const bound = (await this.state()).spaces, assigned = (await this.o.ports.workers?.list())?.assignments ?? [];
-    for (const w of c.workers ?? []) {
-      const step = `worker:${w.alias}`;
-      if (job.steps[step]?.status === "done") continue;
-      const old = assigned.find((a) => a.assignmentId === `${key2}.${w.alias}`);
-      if (old && old.hostId === st.hosts[w.host] && old.kind === w.kind && old.targetSpace === bound[w.targetSpace].spaceId && old.runId === w.runId) {
-        await this.record(key2, job.configHash, (d) => {
-          d.steps[step] = { status: "done", result: old };
-        });
-        continue;
-      }
-      const spec = await this.o.ports.workers.set(sub(key2, job.configHash, "worker", w.alias), { assignmentId: `${key2}.${w.alias}`, hostId: st.hosts[w.host], kind: w.kind, targetSpace: bound[w.targetSpace].spaceId, count: 0, ...w.runId ? { runId: w.runId } : {} });
-      await this.record(key2, job.configHash, (d) => {
-        d.steps[step] = { status: "done", result: spec };
-      });
-    }
-    if (c.routing) await this.record(key2, job.configHash, (d) => {
-      d.steps.routing = { status: "skipped", error: "membership and policy are separate admin commands" };
-    });
-    await this.record(key2, job.configHash, (d) => {
-      d.state = "completed";
-    });
-    return this.view(key2);
-  }
-  async space(key2, hash9, alias, host, spaceId, step, result) {
-    await this.record(key2, hash9, (d, all) => {
-      const old = all.spaces[alias];
-      if (old && (old.spaceId !== spaceId || old.host !== host)) throw new RunGateConflict(`Space alias ${alias} is bound to ${old.spaceId}`);
-      all.spaces[alias] = { host, spaceId };
-      d.steps[step] = { status: "done", result: result ?? { spaceId } };
-    });
-  }
-  record(key2, hash9, f) {
-    return this.o.host.commit(async (tx) => {
-      const d = await tx.doc(DeploymentState), j = d.jobs[key2];
-      if (!j || j.configHash !== hash9) throw new RunGateConflict("deployment job changed");
-      f(j, d);
-    }, this.o.ctx);
-  }
-  async view(key2) {
-    const j = (await this.state()).jobs[key2];
-    return { deployment: key2, configHash: j.configHash, state: j.state, steps: j.steps };
-  }
-  /** Starts (or rescales) the registered workers of a completed deployment to their configured counts. */
-  async startWorkers(commandId, deployment) {
-    if (!ID4.test(commandId)) throw new IllegalArgumentError("invalid command ID");
-    const st = await this.state(), job = st.jobs[deployment];
-    if (!job || job.state !== "completed") throw new RunGateConflict(`deployment ${deployment} is not completed`);
-    const out = [];
-    for (const w of job.config.workers ?? []) {
-      const spec = await this.o.ports.workers.set(sub(commandId, w.alias), { assignmentId: `${deployment}.${w.alias}`, hostId: st.hosts[w.host], kind: w.kind, targetSpace: st.spaces[w.targetSpace].spaceId, count: w.count, ...w.runId ? { runId: w.runId } : {} });
-      out.push({ alias: w.alias, count: spec.count, generation: spec.generation });
-    }
-    return out;
-  }
-  /** The applied state for export and diff: bindings, last config per deployment and current worker counts. */
-  async export(deployment) {
-    const st = await this.state(), job = st.jobs[deployment];
-    const assigned = this.o.ports.workers ? (await this.o.ports.workers.list()).assignments : [];
-    const workers = (job?.config.workers ?? []).map((w) => ({ alias: w.alias, count: assigned.find((a) => a.assignmentId === `${deployment}.${w.alias}`)?.count ?? 0 }));
-    return { deployment, configHash: job?.configHash ?? null, state: job?.state ?? null, hosts: st.hosts, spaces: st.spaces, workers, config: job?.config ?? null };
-  }
-};
-function deploymentCommands(d) {
-  const wrap = (f) => async (id3, a) => {
-    try {
-      return await f(id3, a);
-    } catch (e) {
-      if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError) return { phase: "failed", error: e.message };
-      throw e;
-    }
-  };
-  return {
-    planDeployment: wrap((_id, a) => d.plan(a.config)),
-    applyDeployment: wrap((_id, a) => d.apply(a.config)),
-    bindHostAlias: wrap((_id, a) => d.bindHost(String(a.alias ?? ""), String(a.hostId ?? ""))),
-    startWorkers: wrap((id3, a) => d.startWorkers(id3, String(a.deployment ?? ""))),
-    exportDeployment: wrap((_id, a) => d.export(String(a.deployment ?? "")))
-  };
-}
-function capabilityHostStatus(host, ctx, controlSpaceId, now = Date.now) {
-  return async (hostId) => {
-    const s = await snapshotSpace(host, controlSpaceId, ctx), t = now();
-    const at = Math.max(-Infinity, ...s ? list(s, t, { type: "Capability", fields: { hostId } }).map((e) => Number(e.fields.at)) : []);
-    return Number.isFinite(at) ? { fresh: t - at < CAPABILITY_LEASE_MS, at } : { fresh: false };
-  };
-}
 
 // src/alerts.ts
 init_spaces();
@@ -15328,6 +15699,7 @@ async function rootCall(space, peerId, call) {
 
 // src/runtime.ts
 init_rotation();
+init_core();
 init_service();
 init_auth();
 init_enroll();
@@ -15560,6 +15932,10 @@ async function startFederationHost(host, ctx, o) {
   if (!o.boot && !o.unsafeSkipBootGuardForTests) throw new Error("a federation host requires independent boot authorization and local installation");
   const stopBoot = o.boot ? installBootGuard(host, ctx, { ...o.boot, hostId: o.hostId, authorityId: o.authorityId }) : void 0;
   const identity = new GateIdentity();
+  const aliasOf = async (space) => {
+    const info = (await listSpaces(host, ctx)).find((i) => i.spaceId === space || i.alias === (space ?? "default"));
+    return info?.alias ?? space;
+  };
   const service = new SpaceService({
     host,
     ctx,
@@ -15574,7 +15950,7 @@ async function startFederationHost(host, ctx, o) {
       return info ? o.boot?.replicaConfig?.(info.spaceId)?.primaryEpoch ?? (await snapshotSpace(host, info.spaceId, ctx))?.primaryEpoch ?? 1 : 0;
     },
     authorize: async (call, id3, conn) => {
-      const auth = call.frame?.delegation ? o.delegation ? await o.delegation.check(call, id3, conn) : await Promise.reject(new Error("delegation not configured")) : o.verifier.check(call.frame?.grant, id3, call, conn);
+      const auth = call.frame?.delegation ? o.delegation ? await o.delegation.check(call, id3, conn) : await Promise.reject(new Error("delegation not configured")) : o.verifier.check(call.frame?.grant, id3, { ...call, space: await aliasOf(call.space) }, conn);
       await o.refreshPolicy?.();
       auth.check();
       return auth;
@@ -15594,7 +15970,7 @@ async function startFederationHost(host, ctx, o) {
     ...sp.sealedCandidate ? { sealedCandidate: sp.sealedCandidate } : {},
     ...sp.promotionProof ? { promotionProof: sp.promotionProof } : {},
     authorize: async (call, id3, conn) => {
-      const auth = call.frame?.delegation ? sp.delegation ? await sp.delegation.check(call, id3, conn) : await Promise.reject(new Error("delegation not configured")) : o.verifier.check(call.frame?.grant, id3, call, conn);
+      const auth = call.frame?.delegation ? sp.delegation ? await sp.delegation.check(call, id3, conn) : await Promise.reject(new Error("delegation not configured")) : o.verifier.check(call.frame?.grant, id3, { ...call, space: call.space === sp.spaceId ? sp.alias : call.space }, conn);
       await (sp.refreshPolicy ?? o.refreshPolicy)?.();
       auth.check();
       return auth;
@@ -15645,7 +16021,11 @@ async function startFederationHost(host, ctx, o) {
       }
       if (c.method === "runGateInstruction") {
         if (!o.runGates) throw new Error("run gates not configured");
-        return { ok: true, result: await o.runGates.apply(c.args?.instruction) };
+        try {
+          return { ok: true, result: await o.runGates.apply(c.args?.instruction) };
+        } catch (e) {
+          return { ok: false, error: runGateRefusal(e) };
+        }
       }
       if (c.method === "membershipInstruction") {
         const inst = c.args?.instruction, lifecycleEntry = syncEntries.find((sp) => sp.spaceId === inst?.value?.spaceId && ("sealed" in sp || sp.membership));
@@ -15705,7 +16085,7 @@ async function startFederationHost(host, ctx, o) {
             try {
               const { id: id3, proof: proof2, key: key2 } = await proven(conn);
               if (!isHost(id3, proof2, key2) || !o.control.workers) throw Error("worker assignments require a currently proven host");
-              const list2 = await o.control.workers.forHost(id3.principal.peerId);
+              const list2 = await o.control.workers.forHost(o.control.hostForPeer?.(id3.principal.peerId) ?? id3.principal.peerId);
               const current = await o.keys.find(id3.principal.peerId, proof2.keyId);
               if (!current || current.state !== "active" || !current.roles.includes("host")) throw Error("host key no longer authorized");
               return { ok: true, result: list2 };
@@ -15802,7 +16182,14 @@ async function startFederationHost(host, ctx, o) {
       };
       const asyncCommands = {};
       if (o.control.dataAdmin) for (const kind of ["purgeTasks", "deletePrincipal"]) {
-        asyncCommands[kind] = (id3, args, admin) => o.control.dataAdmin.execute(id3, kind, String(args.spaceId ?? ""), admin, kind === "purgeTasks" ? args.template : args.principal);
+        asyncCommands[kind] = async (id3, args, admin) => {
+          try {
+            return await o.control.dataAdmin.execute(id3, kind, String(args.spaceId ?? ""), admin, kind === "purgeTasks" ? args.template : args.principal);
+          } catch (e) {
+            if (e instanceof IllegalArgumentError || e instanceof TransactionError || e instanceof LimitError || e instanceof PermissionError || e instanceof UnknownSpaceError) return { phase: "failed", error: e.message };
+            throw e;
+          }
+        };
       }
       const administer = (peerId, run) => o.control.withAdmin ? o.control.withAdmin(peerId, run) : run();
       if (o.control.profiles) asyncCommands.migrateProfiles = async (id3, args, admin) => administer(admin, () => o.control.profiles.execute(id3, args.policy));
@@ -15830,7 +16217,7 @@ async function startFederationHost(host, ctx, o) {
       }
       supervisor = new Supervisor(o.control.host, ctx, {
         now: o.now,
-        ...Object.keys(asyncCommands).length ? { asyncCommands } : {},
+        ...Object.keys(asyncCommands).length ? { asyncCommands, onError: (e) => console.error("phi-spaces supervisor job:", e instanceof Error ? e.message : String(e)) } : {},
         ...o.control.routing ? { commands: { setPolicy: async (tx, args) => {
           const p = await o.control.routing.applyIn(tx, args.policy, Number(args.expectedVersion));
           return { policyVersion: p.policyVersion };
@@ -15863,6 +16250,8 @@ async function startFederationHost(host, ctx, o) {
         void (async () => {
           try {
             for (const id3 of await runs.pending()) await runs.advance(id3).catch((e) => console.error(`run ${id3} did not advance:`, e));
+          } catch (e) {
+            console.error("phi-spaces runs:", e instanceof Error ? e.message : String(e));
           } finally {
             busy = false;
           }
@@ -15925,7 +16314,7 @@ async function startFederationHost(host, ctx, o) {
 
 // src/tls-register.ts
 import tls from "node:tls";
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 var TlsRecoveryRegister = class {
   o;
   constructor(o) {
@@ -15992,7 +16381,7 @@ var TlsRecoveryRegister = class {
 async function serveTlsRegister(register, o) {
   const open3 = /* @__PURE__ */ new Set();
   const server = tls.createServer({ ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.3", handshakeTimeout: 4e3 }, (socket) => {
-    const certificate = socket.getPeerCertificate(), fingerprint = certificate.raw ? createHash5("sha256").update(certificate.raw).digest("hex") : "", policy = o.peers[fingerprint];
+    const certificate = socket.getPeerCertificate(), fingerprint = certificate.raw ? createHash6("sha256").update(certificate.raw).digest("hex") : "", policy = o.peers[fingerprint];
     if (!socket.authorized || !policy || open3.size >= 32) {
       socket.destroy();
       return;
@@ -16111,16 +16500,16 @@ init_canonical();
 init_grants();
 var ControlHostChangeBlocked = class extends Error {
 };
-var bytes11 = (c) => Buffer.from("phi-spaces/control-host-change/v1\n" + canonicalJson(c));
+var bytes12 = (c) => Buffer.from("phi-spaces/control-host-change/v1\n" + canonicalJson(c));
 var id2 = (v) => typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(v);
 async function signControlHostChange(change, signer) {
-  return { change, algorithm: signer.algorithm, signature: Buffer.from(await signer.sign(bytes11(change))).toString("base64") };
+  return { change, algorithm: signer.algorithm, signature: Buffer.from(await signer.sign(bytes12(change))).toString("base64") };
 }
 function verifyControlHostChange(signed2, pinned) {
   const c = signed2?.change;
   if (!c || ![c.recoveryId, c.authorityId, c.controlSpaceId, c.fromHostId, c.targetHostId].every(id2) || c.fromHostId === c.targetHostId || !Number.isSafeInteger(c.primaryEpoch) || c.primaryEpoch < 2 || typeof c.supervisorKey !== "string" || !["ed25519", "ecdsa-p256"].includes(c.algorithm) || typeof c.address?.host !== "string" || !Number.isSafeInteger(c.address?.port) || c.address.port < 1 || c.address.port > 65535)
     throw new ControlHostChangeBlocked("invalid control host change");
-  if (signed2.algorithm !== pinned.algorithm || !verifyDetached(pinned.algorithm, pinned.publicKey, bytes11(c), signed2.signature)) throw new ControlHostChangeBlocked("invalid recovery admin signature");
+  if (signed2.algorithm !== pinned.algorithm || !verifyDetached(pinned.algorithm, pinned.publicKey, bytes12(c), signed2.signature)) throw new ControlHostChangeBlocked("invalid recovery admin signature");
   return c;
 }
 async function recordControlHostChange(register, signed2, pinned) {
@@ -16345,7 +16734,7 @@ async function startConfiguredFederation(host, ctx, configFile, factories) {
   if ([config.registerReadSocket, config.registerSshTarget, config.registerTls].filter(Boolean).length !== 1) throw new Error("configure exactly one independent register endpoint");
   const external = config.registerTls ? new TlsRecoveryRegister(config.registerTls) : config.registerSshTarget ? new SshRecoveryRegister(config.registerSshTarget) : new SocketRecoveryRegister(config.registerReadSocket), installed = new SqliteRecoveryRegister(config.installedRegisterFile);
   const directory = new NetbirdDirectory({ url: config.management.url, token: privateFile(config.management.tokenFile).toString("utf8").trim() });
-  const groupRoles = config.groupRoles ?? { "space-hosts": ["member", "host", "router"], "space-admin": ["admin"], "space-observer": ["observer"], "space-enroll": ["unpaired"] };
+  const groupRoles = config.groupRoles ?? DEFAULT_GROUP_ROLES;
   let controlSocket;
   try {
     const boot = await external.get(`boot:${config.hostId}`);
@@ -16401,6 +16790,7 @@ async function startConfiguredFederation(host, ctx, configFile, factories) {
     const controlPeer = config.mode === "control" ? ownPeer : await directory.lookup(config.control.address.host);
     if (!controlPeer) throw new BootBlocked("control peer unavailable in provisioned directory");
     if (control2) {
+      control2.hostForPeer = (p) => config.capabilities?.hostBindings?.[p];
       control2.directory = new CapabilityDirectory({ host, ctx, spaceId: config.controlSpaceId, assertAuthority: assertControl, hostForPeer: (p) => config.capabilities?.hostBindings?.[p] });
       control2.replicaNotices = new ReplicaNoticeBoard({ host, ctx, controlSpaceId: config.controlSpaceId, assertAuthority: assertControl, hostForPeer: (p) => config.capabilities?.hostBindings?.[p] });
       control2.leases = new RouterLeaseAuthority({ host, ctx, controlSpaceId: config.controlSpaceId, authorityId, peerId: controlPeer.id, signer, keys, assertAuthority: assertControl, ...factories?.mainReplica ? { controlEpoch: () => factories.mainReplica().primaryEpoch } : {} });
@@ -16434,6 +16824,11 @@ async function startConfiguredFederation(host, ctx, configFile, factories) {
         control2.membership = root.membership;
         control2.profiles = root.profiles;
         control2.withAdmin = root.withAdmin;
+        control2.runs = root.runs;
+        control2.workers = root.workers;
+        control2.spaces = root.spaces;
+        control2.deployment = root.deployment;
+        control2.dataAdmin = root.dataAdmin;
       } catch (e) {
         await root?.close();
         throw e;
@@ -16801,7 +17196,7 @@ init_meter();
 
 // src/netcup-fencing.ts
 import tls2 from "node:tls";
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { closeSync as closeSync2, openSync as openSync2, renameSync as renameSync3, statSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "node:fs";
 
 // src/json-file.ts
@@ -16988,7 +17383,7 @@ async function serveFencing(adapter, o) {
     return p;
   };
   const server = tls2.createServer({ ca: privateFile(o.caFile), cert: privateFile(o.certFile), key: privateFile(o.keyFile), requestCert: true, rejectUnauthorized: true, minVersion: "TLSv1.3", handshakeTimeout: 4e3 }, (socket) => {
-    const c = socket.getPeerCertificate(), fp = c.raw ? createHash6("sha256").update(c.raw).digest("hex") : "";
+    const c = socket.getPeerCertificate(), fp = c.raw ? createHash7("sha256").update(c.raw).digest("hex") : "";
     if (!socket.authorized || !o.peers[fp]?.operator || open3.size >= 8) {
       socket.destroy();
       return;
@@ -17625,300 +18020,6 @@ async function startMemberRecoveryOnly(host, ctx, configFile, assertQuiesced) {
 
 // src/index.ts
 init_rpc_domain();
-
-// src/data-admin.ts
-init_documents();
-init_claims();
-init_types();
-init_canonical();
-init_mailbox();
-init_spaces();
-init_stream();
-init_core();
-init_json();
-import { createHash as createHash7 } from "node:crypto";
-var DataAdminJournal = defineDocFamily({
-  kind: "phi-spaces.data-admin",
-  version: 1,
-  scope: "session",
-  family: true,
-  initial: () => ({ commands: {} })
-});
-var bytes12 = jsonBytes;
-var audit = (c) => ({ hash: c.hash, at: c.at, kind: c.kind, admin: c.admin, count: c.count });
-function commandHash(id3, kind, spaceId, admin, input) {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(id3) || ["__proto__", "constructor", "prototype"].includes(id3)) throw new IllegalArgumentError("invalid admin command ID");
-  if (typeof spaceId !== "string" || !spaceId || spaceId.length > 128 || typeof admin !== "string" || !admin || admin.length > 128) throw new IllegalArgumentError("invalid admin or Space identifier");
-  if (!["purgeTasks", "deletePrincipal"].includes(kind)) throw new IllegalArgumentError("invalid admin command kind");
-  return digestJson({ kind, spaceId, admin, input });
-}
-function validatePrincipal(p) {
-  if (!validPrincipal(p)) throw new IllegalArgumentError("invalid deletion principal");
-}
-function assertTuple(c, s) {
-  if (c.incarnation !== void 0 && (c.incarnation !== (s.incarnation ?? null) || c.authorityId !== (s.acceptedAuthorityId ?? s.membership?.authorityId ?? null))) throw new TransactionError("deletion incarnation or authority changed; restore review required");
-}
-function stableSpace(s, id3) {
-  if (s.spaceId !== id3) throw new IllegalArgumentError("admin commands require the immutable Space ID");
-}
-function quiescent(s) {
-  if (Object.keys(s.txns).length || s.waiters.length || (s.jobs ?? []).length || (s.releaseQueue ?? []).length || pendingClaims(s).length > 0) throw new TransactionError("principal deletion requires a quiescent Space");
-}
-function reserveHeader(s, now, id3) {
-  if (!maintenanceStep(s, 1024, now, "delete-principal:" + id3)) throw new ResourceExhausted("admin metadata exceeds maxCommitBytes");
-}
-var DataAdminController = class {
-  o;
-  constructor(o) {
-    this.o = o;
-  }
-  async check(admin, kind, sid) {
-    await this.o.authorize(admin, kind, sid);
-    await this.o.assertAuthority();
-  }
-  async execute(id3, kind, spaceId, admin, input) {
-    const hash9 = commandHash(id3, kind, spaceId, admin, input);
-    if (kind === "deletePrincipal") {
-      await this.startDeletion(id3, spaceId, admin, input);
-      for (; ; ) {
-        const r = await this.advanceDeletion(id3, spaceId, admin, input);
-        if (r.phase === "completed") return audit(r);
-      }
-    }
-    await this.check(admin, kind, spaceId);
-    return this.o.host.commit(async (tx) => {
-      await this.check(admin, kind, spaceId);
-      const d = await tx.doc(DataAdminJournal, spaceId, null), old = d.commands[id3];
-      if (old) {
-        if (old.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
-        const s2 = await spaceDoc(tx, spaceId, (this.o.now ?? Date.now)());
-        stableSpace(s2, spaceId);
-        assertTuple(old, s2);
-        return audit(old);
-      }
-      if (Object.keys(d.commands).length >= 128) throw new ResourceExhausted("admin journal is full");
-      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
-      stableSpace(s, spaceId);
-      assertAdminIdle(s);
-      reserveHeader(s, now, id3);
-      const c = { hash: hash9, kind, admin, at: now, count: purgeTasks(s, now, input), incarnation: s.incarnation ?? null, authorityId: s.acceptedAuthorityId ?? s.membership?.authorityId ?? null };
-      d.commands[id3] = c;
-      await this.check(admin, kind, spaceId);
-      return audit(c);
-    }, this.o.ctx);
-  }
-  /** Explicit start/advance are also usable by a supervisor that resumes one batch at a time. */
-  async startDeletion(id3, spaceId, admin, p) {
-    validatePrincipal(p);
-    const hash9 = commandHash(id3, "deletePrincipal", spaceId, admin, p);
-    await this.check(admin, "deletePrincipal", spaceId);
-    return this.o.host.commit(async (tx) => {
-      await this.check(admin, "deletePrincipal", spaceId);
-      const d = await tx.doc(DataAdminJournal, spaceId, null), old = d.commands[id3];
-      if (old) {
-        if (old.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
-        const s2 = await spaceDoc(tx, spaceId, (this.o.now ?? Date.now)());
-        stableSpace(s2, spaceId);
-        assertTuple(old, s2);
-        return { ...audit(old), phase: old.phase ?? "completed", batches: old.batches ?? 0 };
-      }
-      if (Object.keys(d.commands).length >= 128) throw new ResourceExhausted("admin journal is full");
-      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
-      stableSpace(s, spaceId);
-      assertAdminIdle(s);
-      settle(s, now);
-      quiescent(s);
-      reserveHeader(s, now, id3);
-      s.adminMaintenance = { commandId: id3, hash: hash9 };
-      s.snapshotEpoch = (s.snapshotEpoch ?? 0) + 1;
-      if (docBytes(s) > limitsOf(s).maxDocBytes) throw new ResourceExhausted("admin fence exceeds maxDocBytes");
-      d.commands[id3] = { hash: hash9, kind: "deletePrincipal", admin, at: now, count: 0, phase: "registrations", principal: plain(p), incarnation: s.incarnation ?? null, authorityId: s.acceptedAuthorityId ?? s.membership?.authorityId ?? null, batches: 0 };
-      touch2(s, now);
-      await this.check(admin, "deletePrincipal", spaceId);
-      return { ...audit(d.commands[id3]), phase: "registrations", batches: 0 };
-    }, this.o.ctx);
-  }
-  async advanceDeletion(id3, spaceId, admin, p) {
-    validatePrincipal(p);
-    const hash9 = commandHash(id3, "deletePrincipal", spaceId, admin, p);
-    await this.check(admin, "deletePrincipal", spaceId);
-    return this.o.host.commit(async (tx) => {
-      await this.check(admin, "deletePrincipal", spaceId);
-      const d = await tx.doc(DataAdminJournal, spaceId, null), c = d.commands[id3];
-      if (!c) throw new IllegalArgumentError("unknown deletion command");
-      if (c.hash !== hash9) throw new IllegalArgumentError("admin command ID changed");
-      const now = (this.o.now ?? Date.now)(), s = await spaceDoc(tx, spaceId, now);
-      stableSpace(s, spaceId);
-      assertTuple(c, s);
-      if (!c.phase || c.phase === "completed") return { ...audit(c), phase: "completed", batches: c.batches ?? 0 };
-      if (s.adminMaintenance?.commandId !== id3 || s.adminMaintenance.hash !== hash9 || c.incarnation !== (s.incarnation ?? null) || c.authorityId !== (s.acceptedAuthorityId ?? s.membership?.authorityId ?? null)) throw new TransactionError("deletion fence or incarnation changed; restore review required");
-      quiescent(s);
-      reserveHeader(s, now, id3);
-      eraseBatch(s, c, p, now, id3);
-      c.batches = (c.batches ?? 0) + 1;
-      const phase = c.phase;
-      if (phase === "completed") {
-        delete c.principal;
-        delete s.adminMaintenance;
-        delete s.maintenance;
-        s.snapshotEpoch = (s.snapshotEpoch ?? 0) + 1;
-      }
-      touch2(s, now);
-      await this.check(admin, "deletePrincipal", spaceId);
-      return { ...audit(c), phase, batches: c.batches };
-    }, this.o.ctx);
-  }
-};
-function eraseBatch(s, c, p, now, id3) {
-  const pid = principalId(p), same3 = (q) => principalId(q) === pid, ids = new Set(s.entries.filter((e) => e.owner === pid).map((e) => e.id));
-  let mutations = 0;
-  const spend = (cost) => {
-    if (mutations >= 32) return false;
-    if (!maintenanceStep(s, cost, now, "delete-principal:" + id3)) {
-      if (mutations === 0) throw new ResourceExhausted("one deletion tombstone exceeds maxCommitBytes; operator review required");
-      return false;
-    }
-    mutations++;
-    return true;
-  };
-  const affected = (v) => typeof v === "string" ? v === pid || ids.has(v) : v !== null && typeof v === "object" ? Object.values(v).some(affected) : false;
-  switch (c.phase) {
-    case "registrations": {
-      for (let i = s.regs.length - 1; i >= 0; i--) {
-        const r = s.regs[i];
-        if (r.target === pid || r.consumer && same3(r.consumer)) {
-          if (!spend(256)) return;
-          s.regs.splice(i, 1);
-        } else if (r.pendingEntry && ids.has(r.pendingEntry.id)) {
-          if (!spend(256)) return;
-          delete r.pendingEntry;
-          r.pending = 0;
-        }
-      }
-      for (let i = s.outbox.length - 1; i >= 0; i--) {
-        const e = s.outbox[i];
-        if (e.target === pid || e.entry && ids.has(e.entry.id)) {
-          if (!spend(256)) return;
-          s.outbox.splice(i, 1);
-        }
-      }
-      c.phase = "mailboxes";
-      return;
-    }
-    case "mailboxes": {
-      for (const [key2, b] of Object.entries(s.mailboxes?.boxes ?? {})) {
-        if (same3(b.principal)) {
-          if (!spend(256 + bytes12(key2))) return;
-          delete s.mailboxes.boxes[key2];
-        } else if (b.events.some((e) => e.event.entry && ids.has(e.event.entry.id))) {
-          if (!spend(512 + bytes12(key2))) return;
-          b.gap = { epoch: b.epoch, from: b.acked + 1, to: b.next - 1 };
-          b.epoch = "deleted-" + createHash7("sha256").update(b.epoch + id3).digest("hex");
-          b.acked = b.next - 1;
-          b.delivered = b.acked;
-          b.events = [];
-          b.bytes = 2;
-        }
-      }
-      c.phase = "claims";
-      return;
-    }
-    case "claims": {
-      {
-        const claims = s.rpc?.claims;
-        const disk = diskMapOf(claims), inRpc = true;
-        const change = (key2, before, next) => {
-          if (disk && inRpc) {
-            s.rpc.bytes = (s.rpc.bytes ?? 0) - bytes12(before) + (next ? bytes12(next) : -bytes12(key2) - 2);
-            s.rpc.reservedBytes = Math.max(0, (s.rpc.reservedBytes ?? 0) - (before.reservedResultBytes ?? 0));
-          }
-          if (next) claims[key2] = next;
-          else delete claims[key2];
-        };
-        const handle = (key2, claim) => {
-          if (same3(claim.principal)) {
-            if (!spend(256 + bytes12(key2))) return false;
-            change(key2, claim, void 0);
-          } else if (claim.result !== void 0 && affected(claim.result)) {
-            if (!spend(256 + bytes12(key2))) return false;
-            const { result: _r, reservedResultBytes: _b, ...rest } = claim;
-            change(key2, claim, { ...rest, resultExpired: true });
-          }
-          return true;
-        };
-        if (disk) {
-          for (let page = disk.page(c.claimKey ?? null, 64); page.length; page = disk.page(c.claimKey ?? null, 64)) for (const [key2, claim] of page) {
-            if (!handle(key2, claim)) return;
-            c.claimKey = key2;
-          }
-        } else for (const [key2, claim] of Object.entries(claims ?? {})) if (!handle(key2, claim)) {
-          tally(s);
-          return;
-        }
-      }
-      for (let page = claimPage(s.restoredClaims, c.restoredKey ?? null, 64); page.length; page = claimPage(s.restoredClaims, c.restoredKey ?? null, 64)) for (const [key2, claim] of page) {
-        if (same3(claim.principal)) {
-          if (!spend(256 + bytes12(key2))) {
-            if (!diskMapOf(s.rpc?.claims)) tally(s);
-            return;
-          }
-          setRestored(s, key2, void 0);
-        } else if (claim.result !== void 0 && affected(claim.result)) {
-          if (!spend(256 + bytes12(key2))) {
-            if (!diskMapOf(s.rpc?.claims)) tally(s);
-            return;
-          }
-          const { result: _r, reservedResultBytes: _b, ...rest } = claim;
-          setRestored(s, key2, { ...rest, resultExpired: true });
-        }
-        c.restoredKey = key2;
-      }
-      if (!diskMapOf(s.rpc?.claims)) tally(s);
-      c.phase = "generations";
-      return;
-    }
-    case "generations": {
-      const disk = !!diskMapOf(s.rpc?.claims);
-      for (const [g, r] of Object.entries(s.rpc?.generations ?? {})) if (same3(r.principal)) {
-        if (!spend(256 + bytes12(g))) {
-          if (!disk) tally(s);
-          return;
-        }
-        if (disk) s.rpc.bytes = (s.rpc.bytes ?? 0) - bytes12(r) - bytes12(g) - 2;
-        delete s.rpc.generations[g];
-      }
-      if (!disk) tally(s);
-      c.phase = "entries";
-      return;
-    }
-    case "entries": {
-      for (let i = s.entries.length - 1; i >= 0; i--) if (s.entries[i].owner === pid) {
-        if (!spend(256 + bytes12(s.entries[i].id))) return;
-        s.entries.splice(i, 1);
-        c.count++;
-      }
-      c.phase = "history";
-      return;
-    }
-    case "history": {
-      if (!spend(512)) return;
-      if (s.stream) {
-        s.stream.floor = s.stream.rev;
-        s.stream.log = [];
-        s.stream.bytes = 0;
-        seal(s);
-      }
-      c.phase = "completed";
-      return;
-    }
-  }
-}
-function tally(s) {
-  if (s.rpc) {
-    s.rpc.bytes = bytes12(s.rpc.claims) + bytes12(s.rpc.generations);
-    s.rpc.reservedBytes = Object.values(s.rpc.claims).reduce((n, c) => n + (c.reservedResultBytes ?? 0), 0);
-  }
-}
 
 // src/root-erasure.ts
 init_canonical();
