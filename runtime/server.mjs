@@ -463,8 +463,14 @@ async function handleApi(req, res, url, p) {
     const target = str(body.target);
     parseSshTarget(target); // throws on invalid / option-like targets
     const name = str(body.name || target, 100);
-    const clients = readClients().filter((c) => c.name !== name);
-    clients.push({ name, target });
+    // `edit` names the entry being changed: it keeps its place in the list, and its old name goes
+    const edit = body.edit ? str(body.edit, 100) : null;
+    const all = readClients();
+    if (edit !== null && !all.some((c) => c.name === edit)) return json(res, 404, { error: 'no such host' });
+    if (edit !== null && name !== edit && all.some((c) => c.name === name)) return json(res, 409, { error: 'a host of that name exists' });
+    const at = all.findIndex((c) => c.name === (edit ?? name));
+    const clients = all.filter((c) => c.name !== name && c.name !== edit);
+    clients.splice(at < 0 ? clients.length : Math.min(at, clients.length), 0, { name, target });
     writeClients(clients);
     return json(res, 200, { ok: true });
   }

@@ -345,3 +345,10 @@ dialog select, dialog input {
 .sp-objects li span { color: var(--muted); }
 .sp-more summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 0; }
 .sp-raw { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; margin: 8px 0 0; color: var(--muted); }
+
+/* clients: a host's row while it is edited */
+.client-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px 13px; margin: 0 10px 8px; background: var(--surf); border: 1px solid var(--primary); border-radius: var(--rad); }
+.client-edit label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.client-edit input { width: 100%; box-sizing: border-box; background: var(--surf2); color: var(--text); border: 1px solid var(--border); border-radius: var(--rad); padding: 11px 12px; font-size: 15px; }
+.client-edit-bar { display: flex; gap: 8px; }
+.client-edit-bar button { flex: 1; }

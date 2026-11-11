@@ -8,8 +8,8 @@
 
 Minimal Android app that embeds Termux-built binaries (Node.js 26.4.0, bash,
 coreutils, git, ripgrep, fd, openssh, npm, util-linux `script`, …) plus a
-**pi-durable** harness (`@earendil-works/pi-durable` 1.5.0 + pi-ai/chord 1.5.0, with
-pi-coding-agent 1.5.0 bundled for the CLI + TUI) behind a tiny
+**pi-durable** harness (`@earendil-works/pi-durable` 1.5.2 + pi-ai/chord 1.5.2, with
+pi-coding-agent 1.5.2 bundled for the CLI + TUI) behind a tiny
 HTTP/SSE/WebSocket bridge (`runtime/server.mjs`). UI is a local WebView on
 `http://127.0.0.1:<port>` (ephemeral port → `files/home/.pi-mobile/port`,
 token → `…/token`).
@@ -20,18 +20,18 @@ The durable harness gives: SQLite-backed conversations
 conversations owned by the calling task), model selection per conversation,
 and per-conversation execution environments — including remote hosts.
 
-The runtime pins the agent-side Pi packages to 1.5.0. `pi-server` and `pi-client` have no
-1.5.0 release: they use their latest published 1.1.0, with their transport-side
-Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.5.0;
+The runtime pins the agent-side Pi packages to 1.5.2. `pi-server` and `pi-client` have no
+1.5 release: they use their latest published 1.1.0, with their transport-side
+Chord isolated to 1.1.0 through npm overrides. The agent Harness uses Chord 1.5.2;
 the RPC boundary explicitly adapts older contexts to its telemetry-aware context.
-Do not deduplicate the transport onto Chord 1.5.0: its legacy RPC exports are absent there.
+Do not deduplicate the transport onto Chord 1.5: its legacy RPC exports are absent there.
 Tool schemas use `pi-schema`. Conversation watches replace the removed `watchEvents`
 and `viewState` APIs; the bridge retains paged transcript history and forwards
 self-contained snapshots to the existing local and remote renderers.
 
 Before starting this runtime against existing data, back up the agent SQLite
 databases consistently. pi-durable 1.4.0 upgraded them to schema 2, which cannot
-be opened by 1.3.0 or older; 1.5.0 keeps schema 2. Rolling back past 1.4.0
+be opened by 1.3.0 or older; 1.5.x keeps schema 2. Rolling back past 1.4.0
 needs the preceding database backup.
 The separate phi-spaces database is not this agent schema. Installing packages
 or refreshing the bundle does not itself migrate existing runtime data.
@@ -475,6 +475,14 @@ Caveats on device:
 See ANALYSE.md for the full evaluation and upstream facts.
 
 ## Changelog
+
+### Unreleased
+
+- Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
+  `chord`, `pi-coding-agent`, `pi-schema`); `pi-client`/`pi-server` stay at 1.1.0
+  with their Chord 1.1.0 override.
+- Clients: a host's name and address can be edited in place (✎); the entry keeps
+  its place in the list.
 
 ### 0.0.7 — 2026-11-04
 

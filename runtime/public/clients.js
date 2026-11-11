@@ -77,9 +77,45 @@ async function load() {
       load();
     });
 
-    row.append(name, tgt, go, copy, del);
+    const edit = document.createElement('button');
+    edit.textContent = '✎';
+    edit.title = 'edit name and address';
+    edit.addEventListener('click', () => row.replaceWith(editRow(c, row)));
+
+    row.append(name, tgt, go, copy, edit, del);
     list.appendChild(row);
   }
+}
+
+/** The row of a host as a form: name and address editable, saved in place. */
+function editRow(c, row) {
+  const f = document.createElement('form');
+  f.className = 'client-edit';
+  const field = (label, value, attrs = {}) => {
+    const l = document.createElement('label'), i = document.createElement('input');
+    l.textContent = label; i.value = value; i.autocomplete = 'off'; i.autocapitalize = 'off'; i.spellcheck = false;
+    Object.assign(i, attrs); l.append(i); f.append(l); return i;
+  };
+  const name = field('name', c.name);
+  const target = field('address (user@host[:port])', c.target, { required: true, inputMode: 'url' });
+  const bar = document.createElement('div'), save = document.createElement('button'), cancel = document.createElement('button');
+  bar.className = 'client-edit-bar';
+  save.type = 'submit'; save.textContent = 'save'; save.className = 'btn-primary';
+  cancel.type = 'button'; cancel.textContent = 'cancel';
+  cancel.addEventListener('click', () => f.replaceWith(row));
+  bar.append(save, cancel); f.append(bar);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    const r = await post(API.clients, { edit: c.name, name: name.value.trim(), target: target.value.trim() });
+    const j = await r.json().catch(() => ({}));
+    save.disabled = false;
+    if (!j.ok) { msg.textContent = `error: ${j.error || r.status}`; return; }
+    msg.textContent = 'saved';
+    load();
+  });
+  setTimeout(() => target.focus(), 0);
+  return f;
 }
 
 document.getElementById('add-form').addEventListener('submit', async (e) => {
