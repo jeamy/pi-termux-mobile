@@ -7,7 +7,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "test": "node --test test-earendil-upgrade.mjs test-remote-provision.mjs test-remote-state.mjs test-remote-regressions.mjs"
+    "test": "node --test test-earendil-upgrade.mjs test-remote-provision.mjs test-remote-state.mjs test-remote-regressions.mjs test-remote-space.mjs"
   },
   "overrides": {
     "@earendil-works/pi-client": {

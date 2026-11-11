@@ -17,7 +17,8 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { createUnixServer } from '@earendil-works/pi-server/unix';
 import { SessionNotFoundError } from '@earendil-works/pi-server';
-import { SpaceService, StaticIdentity, withSpaceService, startConfiguredFederation } from './phi-spaces.mjs';
+import { SpaceService, StaticIdentity, withSpaceService, startConfiguredFederation, PhiSpaces, connectSpace, createSpace } from './phi-spaces.mjs';
+import { serveRemoteCalls } from './remote-calls.mjs';
 import {
   acquireOwnerLock, agentContext, createCredentialStore, createEventHub, createModelCatalog,
   ensureModel, isBusy, openHarness, pickModel, readJson, requestIdOf, sessionStore, Subagent,
@@ -108,6 +109,116 @@ async function withSessionMutation(id, invoke) {
   finally { if (sessionMutations.get(id) === pending) sessionMutations.delete(id); }
 }
 
+// --- the members, shared by the pi-server listener and the calls over a Space ------------
+
+/** One chat member of a session (`args` as the caller sent them). */
+async function chatMember(sessionId, member, args, c) {
+  const arg = args[0] ?? {};
+  const call = { member };
+  const invoke = async () => {
+    // Existing attachments must lose access as soon as their registry
+    // entry is deleted. Never use the conversation cached by attach.
+    const conv = await conversationOf(sessionId);
+    switch (call.member) {
+      case 'prompt': {
+        const text = String(arg.message ?? (typeof arg === 'string' ? arg : ''));
+        if (!(await ensureModel(conv, models, c))) {
+          throw new Error('no model: add a credential on the server');
+        }
+        const sub = await conv.submit({
+          type: 'input',
+          content: text,
+          requestId: requestIdOf(arg.requestId), // exactly-once across retries
+          whenBusy: whenBusyOf(arg.whenBusy),
+        }, c);
+        return { submissionId: sub.id };
+      }
+      case 'abort':
+        await conv.abort(c);
+        return { ok: true };
+      case 'compact': {
+        const taskId = await conv.compact(typeof arg.instructions === 'string' ? arg.instructions : undefined, c);
+        return { ok: true, taskId };
+      }
+      case 'state': {
+        const view = await conv.watch(c);
+        try { return { ...view.value, busy: isBusy(view) }; } finally { await view.stop(); }
+      }
+      case 'configure': {
+        if (arg.model?.provider && arg.model?.modelId) {
+          await conv.configure({ model: { provider: String(arg.model.provider), modelId: String(arg.model.modelId) } }, c);
+        }
+        return { ok: true };
+      }
+      case 'history': {
+        // entries() is newest-first; the UI needs chronological messages.
+        const limit = Math.min(Math.max(Number(arg.limit) || 200, 1), 500);
+        // position before the page: nothing is lost; repeats are deduped by entry id in the UI
+        const position = await events.position(sessionId);
+        const page = await conv.entries({}, limit, undefined, c);
+        return { entries: [...page.items].reverse(), ...position };
+      }
+      case 'events': {
+        // long-poll; `after` is the last sequence number this client has seen
+        const after = Number(arg.after ?? -1);
+        const epoch = typeof arg.epoch === 'string' ? arg.epoch : undefined;
+        return events.poll(sessionId, after, { epoch, waitMs: 25_000, signal: c?.abortSignal });
+      }
+      default:
+        throw new Error(`unknown member: ${call.member}`);
+    }
+  };
+  return ['prompt', 'abort', 'compact', 'configure'].includes(member)
+    ? withSessionMutation(sessionId, invoke) : invoke();
+}
+
+/** One sessions member. `attachSession` binds a pi-server presentation; over a Space the phone keeps the session itself. */
+async function sessionsMember(member, args, c, attachSession = async () => {}) {
+  const call = { member, args };
+  switch (call.member) {
+    case 'list':
+      return { sessions: (await sessions.list()).map((s) => ({ cwd: WORKDIR, ...s })) };
+    case 'models': {
+      const available = await models.getAvailable();
+      return { models: available.map((m) => ({ provider: m.provider, modelId: m.id })) };
+    }
+    case 'create': {
+      const opts = call.args[0] ?? {};
+      const conv = await sessions.create(
+        { name: typeof opts.name === 'string' ? opts.name.slice(0, 100) : undefined, cwd: WORKDIR },
+        { agent: { model: await pickModel(models) } },
+      );
+      return { id: String(conv.id) };
+    }
+    case 'delete': {
+      const id = String(call.args[0]);
+      return withSessionMutation(id, async () => {
+        const conv = await conversationOf(id);
+        // No prompt/compact can start between abort and removal.
+        await conv.abort(c);
+        // Transcript stays in SQLite; every attached handler now rejects.
+        await sessions.remove(id);
+        return { ok: true };
+      });
+    }
+    case 'attach': {
+      const id = String(call.args[0]);
+      await conversationOf(id);
+      await attachSession(id, c);
+      return { ok: true };
+    }
+    case 'rename': {
+      const id = String(call.args[0]);
+      const name = typeof call.args[1] === 'string' ? call.args[1].slice(0, 100) : undefined;
+      if (!(await sessions.get(id))) throw new Error(`unknown session: ${id}`);
+      await sessions.update(id, { name: name || undefined });
+      return { ok: true };
+    }
+    default:
+      throw new Error(`unknown member: ${call.member}`);
+  }
+}
+
 // --- routed session handles ---------------------------------------------------
 
 function routedSession(sessionId) {
@@ -120,63 +231,7 @@ function routedSession(sessionId) {
       return {
         async invokeService(call, publish, context) {
           if (call.serviceId !== 'chat') throw new Error(`unknown service: ${call.serviceId}`);
-          const c = agentContext(context ?? ctx);
-          const arg = call.args[0] ?? {};
-          const invoke = async () => {
-            // Existing attachments must lose access as soon as their registry
-            // entry is deleted. Never use the conversation cached by attach.
-            const conv = await conversationOf(sessionId);
-            switch (call.member) {
-              case 'prompt': {
-                const text = String(arg.message ?? (typeof arg === 'string' ? arg : ''));
-                if (!(await ensureModel(conv, models, c))) {
-                  throw new Error('no model: add a credential on the server');
-                }
-                const sub = await conv.submit({
-                  type: 'input',
-                  content: text,
-                  requestId: requestIdOf(arg.requestId), // exactly-once across retries
-                  whenBusy: whenBusyOf(arg.whenBusy),
-                }, c);
-                return { submissionId: sub.id };
-              }
-              case 'abort':
-                await conv.abort(c);
-                return { ok: true };
-              case 'compact': {
-                const taskId = await conv.compact(typeof arg.instructions === 'string' ? arg.instructions : undefined, c);
-                return { ok: true, taskId };
-              }
-              case 'state': {
-                const view = await conv.watch(c);
-                try { return { ...view.value, busy: isBusy(view) }; } finally { await view.stop(); }
-              }
-              case 'configure': {
-                if (arg.model?.provider && arg.model?.modelId) {
-                  await conv.configure({ model: { provider: String(arg.model.provider), modelId: String(arg.model.modelId) } }, c);
-                }
-                return { ok: true };
-              }
-              case 'history': {
-                // entries() is newest-first; the UI needs chronological messages.
-                const limit = Math.min(Math.max(Number(arg.limit) || 200, 1), 500);
-                // position before the page: nothing is lost; repeats are deduped by entry id in the UI
-                const position = await events.position(sessionId);
-                const page = await conv.entries({}, limit, undefined, c);
-                return { entries: [...page.items].reverse(), ...position };
-              }
-              case 'events': {
-                // long-poll; `after` is the last sequence number this client has seen
-                const after = Number(arg.after ?? -1);
-                const epoch = typeof arg.epoch === 'string' ? arg.epoch : undefined;
-                return events.poll(sessionId, after, { epoch, waitMs: 25_000, signal: c?.abortSignal });
-              }
-              default:
-                throw new Error(`unknown member: ${call.member}`);
-            }
-          };
-          return ['prompt', 'abort', 'compact', 'configure'].includes(call.member)
-            ? withSessionMutation(sessionId, invoke) : invoke();
+          return chatMember(sessionId, call.member, call.args, agentContext(context ?? ctx));
         },
         release() {},
       };
@@ -192,49 +247,7 @@ const host = {
       return {
         async invokeService(call, publish, context) {
           if (call.serviceId !== 'sessions') throw new Error(`unknown service: ${call.serviceId}`);
-          const c = agentContext(context ?? ctx);
-          switch (call.member) {
-            case 'list':
-              return { sessions: (await sessions.list()).map((s) => ({ cwd: WORKDIR, ...s })) };
-            case 'models': {
-              const available = await models.getAvailable();
-              return { models: available.map((m) => ({ provider: m.provider, modelId: m.id })) };
-            }
-            case 'create': {
-              const opts = call.args[0] ?? {};
-              const conv = await sessions.create(
-                { name: typeof opts.name === 'string' ? opts.name.slice(0, 100) : undefined, cwd: WORKDIR },
-                { agent: { model: await pickModel(models) } },
-              );
-              return { id: String(conv.id) };
-            }
-            case 'delete': {
-              const id = String(call.args[0]);
-              return withSessionMutation(id, async () => {
-                const conv = await conversationOf(id);
-                // No prompt/compact can start between abort and removal.
-                await conv.abort(c);
-                // Transcript stays in SQLite; every attached handler now rejects.
-                await sessions.remove(id);
-                return { ok: true };
-              });
-            }
-            case 'attach': {
-              const id = String(call.args[0]);
-              await conversationOf(id);
-              await presentation.attachSession(id, c);
-              return { ok: true };
-            }
-            case 'rename': {
-              const id = String(call.args[0]);
-              const name = typeof call.args[1] === 'string' ? call.args[1].slice(0, 100) : undefined;
-              if (!(await sessions.get(id))) throw new Error(`unknown session: ${id}`);
-              await sessions.update(id, { name: name || undefined });
-              return { ok: true };
-            }
-            default:
-              throw new Error(`unknown member: ${call.member}`);
-          }
+          return sessionsMember(call.member, call.args, agentContext(context ?? ctx), (id, c) => presentation.attachSession(id, c));
         },
         release() {},
       };
@@ -258,12 +271,36 @@ const server = createUnixServer(host, { serverId, path: SOCK_PATH, mode: 0o600 }
 await server.start();
 console.log(`pi-serverd on ${SOCK_PATH} (serverId ${serverId})`);
 
+// Remote conversations over a Space (remote-calls.mjs; phi-spaces docs/m1-mobile.en.md). PI_SERVERD_REMOTE_SPACE:
+// `local[:alias]` serves the named Space `alias` (default `remote`) of this daemon's own store, which the phone reaches
+// through the federation gate with a grant; `unix:/path` or `tcp:host:port` serves another space server's default
+// Space (PI_SERVERD_REMOTE_SPACE_NAME names a named one). Unset: off.
+let remoteCalls = null, remoteLink = null;
+const remoteSpec = process.env.PI_SERVERD_REMOTE_SPACE;
+if (remoteSpec) {
+  let remoteSpace;
+  if (remoteSpec === 'local' || remoteSpec.startsWith('local:')) {
+    const alias = remoteSpec.slice('local:'.length) || 'remote';
+    await space.commit((tx) => createSpace(tx, alias, Date.now()), ctx);
+    remoteSpace = new PhiSpaces(space, ctx, Date.now, undefined, undefined, { space: alias });
+  } else {
+    remoteLink = connectSpace(remoteSpec, process.env.PI_SERVERD_REMOTE_SPACE_NAME ? { space: process.env.PI_SERVERD_REMOTE_SPACE_NAME } : {});
+    remoteSpace = remoteLink.space;
+  }
+  remoteCalls = serveRemoteCalls(remoteSpace, ({ service, session, member, args }) => service === 'sessions'
+    ? sessionsMember(member, args, agentContext(ctx)) : chatMember(session, member, args, agentContext(ctx)), {
+    onError: (e) => console.error('remote calls:', e?.message || e),
+  });
+  console.log(`pi-serverd: remote calls over ${remoteSpec}`);
+}
+
 let stopping = false;
 async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   console.log(`pi-serverd: ${signal}, closing`);
   try { await server.close?.(); } catch {}
+  try { await remoteCalls?.stop(); remoteLink?.close(); } catch {}
   try { await events.close(); } catch {}
   try { await stopSpaces(); } catch {}
   try { await harness.close(ctx); } catch (e) { console.error('harness.close:', e?.message || e); }
