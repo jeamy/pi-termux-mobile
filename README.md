@@ -487,6 +487,9 @@ See ANALYSE.md for the full evaluation and upstream facts.
   Spaces, more), states in plain words, a hint under every field, confirmations on the page
   instead of browser dialogs, an inline time field for scheduled pause/resume. What every
   field means: [docs/steuerung.md](docs/steuerung.md) (German, like the page).
+- [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
+  the three steps (prepare, pair, connect a Space), every field and button, the status
+  card, error messages and what is kept on the device.
 
 ### 0.0.7 — 2026-11-04
 
