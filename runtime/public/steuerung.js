@@ -73,11 +73,11 @@ const plain = (m) => String(m)
 /** Sends one admin command (or resends a known one) and waits for its result while the page is visible. */
 async function command(kind, args = {}, commandId, { quiet = false } = {}) {
   const buttons = [...document.querySelectorAll('main button')]; buttons.forEach(b => b.disabled = true);
-  if (!quiet) say(`${KIND[kind] ?? kind}: wird gesendet …`);
+  if (!quiet) say(`${KIND[kind] ?? kind}: wird gesendet …`, 'busy');
   try {
     const sent = await api('admin', { kind, args, ...(commandId ? { commandId } : {}) });
     let result = sent.result; const id = sent.operation.commandId;
-    if (!quiet) say(`${KIND[kind] ?? kind}: angenommen, warte auf das Ergebnis … (Auftrag ${id})`);
+    if (!quiet) say(`${KIND[kind] ?? kind}: angenommen, warte auf das Ergebnis … (Auftrag ${id})`, 'busy');
     for (let i = 0; !result && i < 30; i++) {
       if (document.visibilityState !== 'visible') { say(`Auftrag ${id} läuft auf dem Koordinator weiter; das Ergebnis steht dann unter Übersicht → Vorgänge.`); return null; }
       await sleep(1000); result = (await api('result', { commandId: id })).result;

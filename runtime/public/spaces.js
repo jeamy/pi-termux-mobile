@@ -73,9 +73,9 @@ function showResult(action, text, kind) {
 
 async function call(action, body = {}, button) {
   const buttons = [...document.querySelectorAll('button')]; buttons.forEach((b) => (b.disabled = true));
-  const label = button?.textContent; if (button) button.textContent = 'Läuft …';
+  const label = button?.textContent; if (button) { button.textContent = 'Läuft …'; button.classList.add('sp-busy-btn'); }
   showResult(action, '');
-  if (action !== 'status') say('Läuft …');
+  if (action !== 'status') say('Läuft …', 'busy');
   try {
     const response = await fetch('/api/spaces/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-token': token }, body: JSON.stringify(body) });
     const reply = await response.json();
@@ -88,7 +88,7 @@ async function call(action, body = {}, button) {
     if (told) showResult(action, ...told);
     return reply;
   } catch (error) { say(plain(error.message), 'err'); showResult(action, plain(error.message), 'err'); }
-  finally { buttons.forEach((b) => (b.disabled = false)); if (button) button.textContent = label; }
+  finally { buttons.forEach((b) => (b.disabled = false)); if (button) { button.textContent = label; button.classList.remove('sp-busy-btn'); } }
 }
 
 for (const button of document.querySelectorAll('[data-action]')) button.addEventListener('click', () => call(button.dataset.action, {}, button));

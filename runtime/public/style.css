@@ -389,3 +389,9 @@ dialog select, dialog input {
 .sp-result { margin: 10px 0 2px; padding: 10px 12px; border-radius: var(--rad-sm); background: var(--surf2); font-size: 14px; line-height: 1.45; }
 .sp-result.sp-ok { color: var(--success); border: 1px solid rgba(52, 211, 112, .4); }
 .sp-result.sp-err { color: #fff; background: var(--danger-bg); border: 1px solid var(--danger); }
+
+/* a request in flight: stands out from the page (accent colour, spinner); the same on the pressed button */
+.sp-msg.sp-busy, .sp-result.sp-busy { background: var(--prim-dk); color: #fff; border: 1px solid var(--primary); font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.sp-msg.sp-busy::before, .sp-busy-btn::before { content: ''; flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: sp-spin .8s linear infinite; }
+.sp-busy-btn { display: flex !important; align-items: center; justify-content: center; gap: 10px; background: var(--prim-dk) !important; color: #fff !important; opacity: 1 !important; }
+@keyframes sp-spin { to { transform: rotate(360deg); } }
