@@ -146,7 +146,7 @@ Ergebnis vom 2026-11-12:
 | Client | Ergebnis |
 |---|---|
 | `lux@192.168.8.28` | bestanden. Beim ersten Lauf wurde pi-serverd neu bereitgestellt (24 s, `npm install` 12 s). Beim zweiten war der Daemon gesund, die Gesundheitsprüfung lief über die Aufrufe, Verbindung nach 5 s. Ein `space.sock` gibt es dort nicht. |
-| `lux@192.168.8.34` (rb5) | abgebrochen, bevor etwas geändert wurde: Node 22.18.0, gebraucht wird ≥ 22.19.0. |
+| `lux@192.168.8.34` (rb5, Raspberry Pi, Debian 13, aarch64) | bestanden. Am 2026-11-12 brach der erste Versuch ab, weil Node 22.18.0 zu alt war (gebraucht ≥ 22.19.0). Danach Node über nvm auf v22.23.5 gesetzt (`nvm install 22`; 22.18.0 bleibt installiert). Die erste Verbindung richtete pi-serverd neu ein: Dateien, `npm install`, tmux über apt nachinstalliert; nach 52 s verbunden. Beim zweiten Lauf war der Daemon gesund, verbunden nach 5 s. Kein Modell auf dem Host (keine Zugangsdaten), kein `space.sock`. |
 | `mux@192.168.1.174`, `mux@192.168.1.173` | vom Handy aus nicht erreichbar (anderes Netz). |
 
 ## Fehlerbilder
