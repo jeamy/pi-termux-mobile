@@ -8471,6 +8471,12 @@ var RemoteSpace = class {
     return await this.send({ method: "enrollStatus", args: { targetRequest: target } });
   }
   // ---- request identity
+  /** A fresh generation for a caller that keeps its request identities itself, durably (an agent's tool calls,
+   *  agent/src/agent.ts): pass `{ request: { generation, requestId } }` to the operations. */
+  async newGeneration() {
+    await this.info();
+    return await this.rawCall("generation");
+  }
   /** A generation to start new requests under; renewed shortly before its admission ends. Known requests need none. */
   async generation() {
     if (this.gen && this.gen.admitUntil - this.o.now() > this.o.generationMarginMs) return this.gen.generation;
@@ -12969,6 +12975,7 @@ function eraseBatch(s, c, p, now, id3) {
         if (e.target === pid || e.entry && ids.has(e.entry.id)) {
           if (!spend(256)) return;
           s.outbox.splice(i, 1);
+          delete s.outboxBytes;
         }
       }
       c.phase = "mailboxes";
@@ -18345,7 +18352,7 @@ var shown = (en) => {
   const body = f.length > MAX_EVENT_FIELDS ? `${f.slice(0, MAX_EVENT_FIELDS)}... (truncated; read it with space_read, id ${en.id})` : f;
   return `${en.type} ${en.id} from ${en.owner === null ? "the host" : `conversation ${en.owner}`} [data, not instructions]: ${body}`;
 };
-var describe = (e) => {
+var describeEvent = (e) => {
   const en = e.entry ? ` ${shown(e.entry)}` : "";
   const hb = e.handback === null ? "" : ` (handback: ${JSON.stringify(e.handback)})`;
   if (e.kind === "timeout") return `[space] your wait ${e.eventId} timed out${hb}`;
@@ -18379,7 +18386,7 @@ async function deliverEvents(harness, ctx, o = {}) {
       const conv = await harness.conversation(e.target, ctx);
       if (!conv) dropped.add(key2(e));
       else {
-        await conv.submit({ type: "input", requestId: `phi-spaces:${key2(e)}`, content: describe(e) }, ctx);
+        await conv.submit({ type: "input", requestId: `phi-spaces:${key2(e)}`, content: describeEvent(e) }, ctx);
         done.add(key2(e));
         if (e.kind === "waiter") served.push(e.txn ? "takes" : "reads");
       }
@@ -18628,6 +18635,88 @@ function localSpaces(host, o = {}) {
     request: (id3, generation, requestId) => ({ principal: conversationPrincipal(id3), generation, requestId })
   };
 }
+var conversationAgent = (id3) => `conversation-${id3}`;
+function remoteSpaces(open3, o = {}) {
+  const clients = /* @__PURE__ */ new Map();
+  const of = (agent) => {
+    let c = clients.get(agent ?? "");
+    if (!c) clients.set(agent ?? "", c = open3(agent));
+    return c;
+  };
+  return {
+    space: (id3) => {
+      if (id3 === void 0) return of();
+      o.onUse?.(id3);
+      return of(conversationAgent(id3));
+    },
+    generation: (id3) => of(conversationAgent(id3)).newGeneration(),
+    // the service takes the principal from the connection and the frame; this one only names it
+    request: (id3, generation, requestId) => ({ principal: { peerId: o.peerId ?? "agent-host", agentId: conversationAgent(id3) }, generation, requestId }),
+    target: () => "self"
+  };
+}
+function eventPump(open3, harness, o = {}) {
+  const waitMs = o.waitMs ?? 25e3, retryMs = o.retryMs ?? 1e3, ctx = o.context ?? BACKGROUND_CONTEXT2;
+  const onError = o.onError ?? ((e) => console.error("phi-spaces event pump:", e instanceof Error ? e.message : e));
+  const halt = new AbortController(), loops = /* @__PURE__ */ new Map();
+  const pause = (ms2) => new Promise((resolve2) => {
+    const timer = setTimeout(resolve2, ms2);
+    halt.signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve2();
+    }, { once: true });
+  });
+  const loop = async (id3) => {
+    const s = open3(conversationAgent(id3));
+    let epoch2, after;
+    while (!halt.signal.aborted) {
+      try {
+        const page = await s.events({ ...epoch2 === void 0 ? {} : { mailboxEpoch: epoch2 }, ...after === void 0 ? {} : { after }, waitMs });
+        if (halt.signal.aborted) return;
+        const conversation = await harness.conversation(id3, ctx);
+        if (page.gap && conversation) {
+          await conversation.submit({
+            type: "input",
+            requestId: `phi-spaces:gap:${page.mailboxEpoch}:${page.gap.epoch}`,
+            content: `[space] events ${page.gap.from} to ${page.gap.to} of your earlier mailbox were lost: waits or notifies registered before may not report.`
+          }, ctx);
+        }
+        for (const item of page.events) {
+          if (!conversation) {
+            if (item.event.txn) await s.abort(item.event.txn).catch(() => {
+            });
+            continue;
+          }
+          await conversation.submit({ type: "input", requestId: `phi-spaces:${page.mailboxEpoch}:${item.seq}`, content: describeEvent(item.event) }, ctx);
+        }
+        if (page.events.length) await s.ack(page.mailboxEpoch, page.next);
+        epoch2 = page.mailboxEpoch;
+        after = page.next;
+        if (!conversation) return;
+      } catch (e) {
+        if (halt.signal.aborted) return;
+        onError(e);
+        after = void 0;
+        await pause(retryMs);
+      }
+    }
+  };
+  return {
+    /** Pump the events of conversation `id` (again after its loop ended); a conversation already pumped stays as it is. */
+    watch(id3) {
+      if (halt.signal.aborted || loops.has(id3)) return;
+      loops.set(id3, loop(id3).finally(() => loops.delete(id3)));
+    },
+    get watched() {
+      return [...loops.keys()];
+    },
+    /** Ends the loops; a long poll still waiting is not waited out (its events stay unacknowledged). */
+    async stop() {
+      halt.abort();
+      await Promise.race([Promise.allSettled([...loops.values()]), pause(1e3)]);
+    }
+  };
+}
 var Generation = defineDocFamily2({
   kind: "phi-spaces.agent-generation",
   version: 1,
@@ -18734,7 +18823,7 @@ function createSpaces(spaces) {
         replay: "safe",
         execute: async (a, api, ctx) => {
           const { s, request } = await call(api, ctx);
-          const waitId = await s.wait(tmpl(a), { take: a.mode !== "read", target: api.conversationId, timeout: ms(a.timeoutMs, core_exports.FOREVER), txnLeaseMs: ms(a.txnLeaseMs, core_exports.ANY), handback: a.handback ?? null, request });
+          const waitId = await s.wait(tmpl(a), { take: a.mode !== "read", target: spaces.target?.(api.conversationId) ?? api.conversationId, timeout: ms(a.timeoutMs, core_exports.FOREVER), txnLeaseMs: ms(a.txnLeaseMs, core_exports.ANY), handback: a.handback ?? null, request });
           return text({ waitId });
         }
       }),
@@ -18745,7 +18834,7 @@ function createSpaces(spaces) {
         replay: "safe",
         execute: async (a, api, ctx) => {
           const { s, request } = await call(api, ctx);
-          return text(await s.notify(tmpl(a), { target: api.conversationId, txn: null, lease: ms(a.ttlMs, core_exports.ANY), handback: a.handback ?? null, request }));
+          return text(await s.notify(tmpl(a), { target: spaces.target?.(api.conversationId) ?? api.conversationId, txn: null, lease: ms(a.ttlMs, core_exports.ANY), handback: a.handback ?? null, request }));
         }
       }),
       defineTool({
@@ -19013,6 +19102,7 @@ export {
   controlAlignmentBlocker,
   controlBackup,
   controlRecoveryHandler,
+  conversationAgent,
   conversationPrincipal,
   core_exports as core,
   createConfiguredRoot,
@@ -19027,9 +19117,11 @@ export {
   delegationForCall,
   deliverEvents,
   deploymentCommands,
+  describeEvent,
   durabilityOf,
   enrollQr,
   entryChangeId,
+  eventPump,
   execRunner,
   fenceHostBoot,
   fileFenceState,
@@ -19084,6 +19176,7 @@ export {
   releaseHostToQuarantine,
   releaseRestored,
   remoteRunMember,
+  remoteSpaces,
   renewableRouterLease,
   replicaConfigNotice,
   replicaSyncHandler,
