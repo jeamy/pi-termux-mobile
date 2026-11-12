@@ -6,7 +6,7 @@ const token = renderMenu();
 
 const term = new Terminal({
   fontFamily: 'monospace',
-  fontSize: 16,
+  fontSize: 12,
   cursorBlink: true,
   scrollback: 5000,
   convertEol: false,
