@@ -116,6 +116,39 @@ Danach `--restore` nicht vergessen.
   - der Keystore-Schlüssel der Demo-Kopplung;
   - die Ports, die das Skript per adb umgeleitet hat. Das Skript gibt sie am Ende wieder frei.
 
+## Der SSH-Weg mit einem gespeicherten Client
+
+`scripts/remote-demo/phone-ssh.mjs` prüft den zweiten Weg der Remote-Seite. Das Handy verbindet sich per SSH mit einem
+Client aus **Clients**. Durch den Tunnel erreicht es den Gesprächs-Socket von pi-serverd und macht dort dieselben
+Aufrufe über einen Space. Dabei laufen echte Rechner, echtes SSH und die Bereitstellung von pi-serverd auf dem Host.
+
+```sh
+node scripts/remote-demo/phone-ssh.mjs --device 192.168.8.35:41205 --target lux@192.168.8.28 [--allow-update] [--prompt "Text"]
+```
+
+1. `POST /api/remote/connect` mit `copyAuth: false`: Das Skript kopiert nie `auth.json` auf den Host.
+   - Fehlt pi-serverd auf dem Host oder ist es veraltet, wird es dort bereitgestellt: Dateien hochladen,
+     `npm install`, Start in tmux. Die Zeilen des Hosts erscheinen als `host: …`.
+   - Ein laufender, veralteter Daemon wird nur mit `--allow-update` ersetzt, denn laufende Arbeit auf dem Host wird
+     dabei unterbrochen. Ohne diese Option bricht das Skript mit einem Hinweis ab.
+2. Die Modelle des Hosts werden aufgelistet.
+3. Eine eigene Sitzung „ssh-test …“: `create`, `attach`, `state`, `history`.
+4. Ohne `--prompt`: ein `events`-Long-Poll ohne Ereignisse. Der Host hält ihn 25 s und antwortet dann mit leerer
+   Liste. Mit `--prompt` geht stattdessen ein Prompt an das Modell des Hosts, mit dessen eigenen Zugangsdaten. Das
+   kann Tokens kosten.
+5. `rename`, `delete` (die Sitzung ist danach nicht mehr gelistet), `disconnect`.
+
+Der Daemon läuft danach auf dem Host weiter, wie nach jeder Verbindung der Remote-Seite. Beenden lässt er sich mit
+**Stop** auf der Remote-Seite oder `POST /api/remote/stop`.
+
+Ergebnis vom 2026-11-12:
+
+| Client | Ergebnis |
+|---|---|
+| `lux@192.168.8.28` | bestanden. Beim ersten Lauf wurde pi-serverd neu bereitgestellt (24 s, `npm install` 12 s). Beim zweiten war der Daemon gesund, die Gesundheitsprüfung lief über die Aufrufe, Verbindung nach 5 s. Ein `space.sock` gibt es dort nicht. |
+| `lux@192.168.8.34` (rb5) | abgebrochen, bevor etwas geändert wurde: Node 22.18.0, gebraucht wird ≥ 22.19.0. |
+| `mux@192.168.1.174`, `mux@192.168.1.173` | vom Handy aus nicht erreichbar (anderes Netz). |
+
 ## Fehlerbilder
 
 | Meldung | Ursache |
@@ -125,3 +158,5 @@ Danach `--restore` nicht vergessen.
 | `unknown key for this peer` | Das Handy ist noch mit einem früheren Koordinator gekoppelt. `run.sh` gibt bei frischem Speicher `--fresh` mit. |
 | `the generation signature or binding is invalid` im `agent-host.log` | Der Space-Dienst des Agent-Hosts läuft unter einer anderen Autorität als der des Gates. Im Koordinator sind deshalb beide `b9`. |
 | `timeout: no answer to list` | Der Agent-Host nimmt keine Aufrufe an. `agent-host.log` lesen. |
+| `pi-serverd on … is outdated and does not answer this app` | Ein Daemon von vor dem Umbau läuft noch, das Update wurde abgelehnt. Mit `--allow-update` (bzw. auf der Seite mit Zustimmung zum Update) erneut verbinden. |
+| `Node.js >=22.19.0 required` | Die Node-Version auf dem Host ist zu alt. Node dort aktualisieren. |

@@ -10,24 +10,12 @@
 //   node phone.mjs --device … --restore      puts the phone's previous Spaces profile back
 //
 // Before pairing, the phone's current profile (space-profile.json) is moved to space-profile.before-remote-demo.json.
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import http from 'node:http';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { DIR, arg, args, bridge, step } from './bridge.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const args = process.argv.slice(2);
-const arg = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
-const ADB = arg('--adb', process.env.ADB || path.join(here, '../../tools/android-sdk/platform-tools/adb'));
-const DEVICE = arg('--device', process.env.ANDROID_SERIAL);
-const APP = 'org.pimobile.app', DIR = 'files/home/.pi-mobile', BACKUP = 'space-profile.before-remote-demo.json';
-if (!DEVICE) { console.error('--device SERIAL (adb devices) is required'); process.exit(2); }
-
-const adb = (...a) => execFileSync(ADB, ['-s', DEVICE, ...a], { encoding: 'utf8' }).trim();
-const asApp = (cmd) => adb('shell', `run-as ${APP} sh -c '${cmd}'`);
-const step = (text) => console.log(`\n▸ ${text}`);
+const BACKUP = 'space-profile.before-remote-demo.json';
+const { asApp, api, connect, close } = bridge();
 
 if (args.includes('--restore')) {
   step('put the previous Spaces profile back');
@@ -40,25 +28,7 @@ const MESSAGE = arg('--message', 'hallo vom Handy über den Space');
 if (!ENDPOINT || !CONTROL || !PEER || !TOKEN_FILE) { console.error('--endpoint, --control, --peer and --token-file are required'); process.exit(2); }
 
 step('reach the app bridge on the phone');
-const appPort = asApp(`cat ${DIR}/port`), token = asApp(`cat ${DIR}/token`);
-const local = adb('forward', 'tcp:0', `tcp:${appPort}`);
-console.log(`bridge on the phone at 127.0.0.1:${appPort}, here at 127.0.0.1:${local}`);
-// the bridge answers only requests addressed to its own 127.0.0.1:<port> (a guard against DNS rebinding): the Host
-// header names the phone's port, not the forwarded one, so node:http instead of fetch (which cannot set Host)
-const api = (method, p, body) => new Promise((resolve, reject) => {
-  const data = body ? JSON.stringify(body) : '';
-  const req = http.request({ host: '127.0.0.1', port: Number(local), path: p, method,
-    headers: { host: `127.0.0.1:${appPort}`, 'x-token': token, 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (res) => {
-    let text = '';
-    res.setEncoding('utf8').on('data', (d) => { text += d; }).on('end', () => {
-      let reply = {};
-      try { reply = JSON.parse(text); } catch {}
-      if (res.statusCode >= 400 || reply.error) reject(new Error(`${p}: ${reply.error || res.statusCode}`)); else resolve(reply);
-    });
-  });
-  req.on('error', reject);
-  req.end(data);
-});
+connect();
 
 try {
   step('Spaces profile');
@@ -114,5 +84,5 @@ try {
   await api('POST', '/api/remote/disconnect', {});
   console.log('\n✓ demo passed: paired over WLAN, remote conversation over the Space, one prompt answered');
 } finally {
-  try { adb('forward', '--remove', `tcp:${local}`); } catch {}
+  close();
 }
