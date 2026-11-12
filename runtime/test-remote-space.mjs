@@ -22,7 +22,7 @@ const OTHER = process.env.PHI_SPACES_SERVER_CMD?.trim().split(/\s+/);
 async function spaceServer(t, dir) {
   const sock = path.join(dir, 'space.sock');
   if (OTHER) {
-    const child = spawn(OTHER[0], [...OTHER.slice(1), '--store', 'memory', '--listen', `unix:${sock}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(OTHER[0], [...OTHER.slice(1), '--store', 'memory', '--listen', `unix:${sock}`, '--agent-host'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
     t.later(async () => { if (child.exitCode === null) { const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; } });
@@ -30,7 +30,7 @@ async function spaceServer(t, dir) {
   } else {
     const host = openOwnMemoryHost();
     const stop = await startService(host, ctx);
-    const server = await serveSpace(new SpaceService({ host, ctx, identity: new StaticIdentity({ local: { principal: { peerId: 'local' }, roles: ['member'] } }) }), { listen: { path: sock }, connection: () => ({ peerId: 'local' }) });
+    const server = await serveSpace(new SpaceService({ host, ctx, identity: new StaticIdentity({ local: { principal: { peerId: 'local' }, roles: ['member', 'agentHost'] } }) }), { listen: { path: sock }, connection: () => ({ peerId: 'local' }) });
     t.later(async () => { await server.close(); await stop(); await host.close(ctx); });
   }
   return `unix:${sock}`;
@@ -42,11 +42,11 @@ function client(t, spec) {
   return link.space;
 }
 
-async function daemon(t, home, spec) {
+async function daemon(t, home, spec, o = {}) {
   let output = '';
   const child = spawn(process.execPath, [path.join(root, 'pi-serverd.mjs')], {
     env: { ...process.env, HOME: home, PI_TEST_FAUX: '1', PI_WORKDIR: home, PI_SERVERD_SOCK: `${home}/.pi-serverd/server.sock`,
-      PI_SERVERD_ID: '', PI_PROVIDER: '', PI_MODEL: '', PI_SERVERD_REMOTE_SPACE: spec },
+      PI_SERVERD_ID: '', PI_PROVIDER: '', PI_MODEL: '', ...(o.env ?? { PI_SERVERD_REMOTE_SPACE: spec }) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (d) => { output += d; }); child.stderr.on('data', (d) => { output += d; });
@@ -57,12 +57,12 @@ async function daemon(t, home, spec) {
       try { await closed; } finally { clearTimeout(timer); }
     }
   });
-  for (const deadline = Date.now() + 15_000; !output.includes('remote calls over');) {
+  for (const deadline = Date.now() + 15_000; !output.includes(o.ready ?? 'remote calls over');) {
     assert.equal(child.exitCode, null, output);
     assert.ok(Date.now() < deadline, `daemon startup timeout: ${output}`);
     await sleep(25);
   }
-  return () => output;
+  return Object.assign(() => output, { stop: async () => { const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; } });
 }
 
 /** A test's own directory; everything registered with `later` is undone in reverse order (clients before the server). */
@@ -141,4 +141,47 @@ test('pi-serverd answers the sessions and chat calls over a Space', { timeout: 1
   assert.deepEqual((await remote.list()).sessions.map((s) => String(s.id)), [other]);
   await remote.attach(other);
   await assert.rejects(remote.attach(id), /unknown session/);
+});
+
+/** The history of the session `id` over the conversation socket, as text, once `pattern` is in it. */
+async function historyWith(remote, pattern, log) {
+  let text = '';
+  for (let i = 0; i < 150 && !pattern.test(text); i++) {
+    text = JSON.stringify((await remote.request('history', [{ limit: 50 }])).entries);
+    if (!pattern.test(text)) await sleep(100);
+  }
+  assert.match(text, pattern, log());
+  return text;
+}
+
+test('pi-serverd conversations use another server\'s space as agents of one host, and get its events after a restart', { timeout: 120_000 }, async (t) => {
+  const dir = tmp(t), spec = await spaceServer(t, dir);
+  const writer = client(t, spec);
+  const opts = { env: { PI_SERVERD_AGENT_SPACE: spec }, ready: 'conversations use the space' };
+  const conversations = () => {
+    const link = connectSpace(`unix:${dir}/.pi-serverd/server.sock`, { callTimeoutMs: 60_000 });
+    const remote = remoteOverSpace(link.space, { timeoutMs: 30_000 });
+    return { remote, close: async () => { await remote.disconnect().catch(() => {}); link.close(); } };
+  };
+  let log = await daemon(t, dir, spec, opts);
+  let c = conversations();
+  const { id } = await c.remote.create({ name: 'wartet' });
+  await c.remote.attach(id);
+  // a wait is registered at the space server, for the conversation's own mailbox; its event comes back as input
+  await c.remote.request('prompt', [{ message: '!wait Job', requestId: randomUUID() }]);
+  await historyWith(c.remote, /tool said: .*wait/, log);
+  await writer.write({ type: 'Job', fields: { n: 1 } }, null, 600_000);
+  await historyWith(c.remote, /your wait .* was served/, log);
+  assert.equal(await writer.count({ type: 'Job' }), 0, 'the conversation holds the job (taken under its transaction)');
+  // a subscription; the daemon stops; an entry written meanwhile is handed over after the restart
+  await c.remote.request('prompt', [{ message: '!notify Note', requestId: randomUUID() }]);
+  await historyWith(c.remote, /tool said: .*(notif|subscri)/i, log);
+  await c.close(); await log.stop();
+  await writer.write({ type: 'Note', fields: { n: 2 } }, null, 600_000);
+  log = await daemon(t, dir, spec, opts);
+  assert.match(log(), /1 watched/, 'the conversation is watched again');
+  c = conversations(); t.later(() => c.close());
+  await c.remote.attach(id);
+  const text = await historyWith(c.remote, /\[space event/, log);
+  assert.equal(text.match(/"role":"user","content":"\[space event/g)?.length, 1, 'handed over once, as one input');
 });

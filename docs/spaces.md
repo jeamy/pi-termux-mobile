@@ -83,6 +83,26 @@ muss bereits laufen. Der SSH-Weg über die Hosts unter „Clients“ bleibt dane
 
 Eine Demo dieses Wegs im WLAN, mit Skripten, beschreibt [remote-demo.md](remote-demo.md).
 
+### Space-Werkzeuge der Sitzungen auf einem anderen Space-Server
+
+Die Sitzungen von pi-serverd nutzen ihre Space-Werkzeuge (`space_write`, `space_wait`, `space_notify` …) sonst im
+eigenen Speicher des Rechners (`~/.pi-serverd/space.sqlite`). Mit `PI_SERVERD_AGENT_SPACE=unix:/pfad.sock` oder
+`tcp:HOST:PORT` (dazu `PI_SERVERD_AGENT_SPACE_NAME` für einen benannten Space dort) nutzen sie stattdessen den Space
+eines anderen Space-Servers. pi-serverd ist dort **ein** Agent-Host; die Verbindung braucht die Rolle `agentHost`,
+etwa `space-server --agent-host` oder `phi-space-server --agent-host`.
+
+- Jede Sitzung handelt dort als eigener Agent `conversation-<id>`: eigenes Postfach, eigene Transaktionen. Was eine
+  Sitzung genommen hat, kann nur sie committen.
+- Eine Ereignispumpe liest das Postfach jeder Sitzung, die den Space benutzt hat, und reicht jedes Ereignis genau
+  einmal als Eingabe weiter, mit demselben Text wie im eigenen Speicher („[space event …“, „[space] your wait …“).
+- Welche Sitzungen beobachtet werden, steht in `~/.pi-serverd/agent-space.json`. Nach einem Neustart kommen auch die
+  Ereignisse an, die in der Zwischenzeit entstanden sind. Gilt die Datei für einen anderen Server oder Space, wird sie
+  nicht übernommen.
+- Eine gelöschte Sitzung beendet ihre Schleife; was ihr übergeben war, geht an den Space zurück.
+
+Der Test `runtime/test-remote-space.mjs` prüft das gegen den TypeScript-Server und, mit `PHI_SPACES_SERVER_CMD`,
+gegen den Rust-Server.
+
 ## Gekoppelt: was man tun kann
 
 | Knopf | Wirkung |

@@ -127,7 +127,7 @@ export async function createModelCatalog(credentials) {
 }
 
 // Test hook only (PI_TEST_FAUX=1): a scripted model, no network. Echoes the
-// last user message; "!bash <cmd>" / "!sub <task>" request a tool call first.
+// last user message; "!bash <cmd>" / "!sub <task>" / "!wait <type>" / "!notify <type>" request a tool call first.
 async function installTestFaux(models) {
   const { fauxProvider, fauxAssistantMessage, fauxToolCall } = await import('@earendil-works/pi-ai/providers/faux');
   const faux = fauxProvider();
@@ -142,6 +142,9 @@ async function installTestFaux(models) {
     const cmd = /^!(bash|sub) (.+)$/s.exec(text);
     if (cmd?.[1] === 'bash') return fauxAssistantMessage(fauxToolCall('bash', { command: cmd[2] }), { stopReason: 'toolUse' });
     if (cmd?.[1] === 'sub') return fauxAssistantMessage(fauxToolCall('subagent', { task: cmd[2] }), { stopReason: 'toolUse' });
+    const space = /^!(wait|notify) (\S+)$/.exec(text);
+    if (space?.[1] === 'wait') return fauxAssistantMessage(fauxToolCall('space_wait', { type: space[2], timeoutMs: 600_000 }), { stopReason: 'toolUse' });
+    if (space?.[1] === 'notify') return fauxAssistantMessage(fauxToolCall('space_notify', { type: space[2], ttlMs: 600_000 }), { stopReason: 'toolUse' });
     return fauxAssistantMessage(`echo: ${text}`);
   };
   faux.setResponses([respond]);

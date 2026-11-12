@@ -498,6 +498,11 @@ See ANALYSE.md for the full evaluation and upstream facts.
   (LAN coordinator, pi-serverd with the scripted model, the phone driven over adb; flow in
   [docs/remote-demo.md](docs/remote-demo.md), German); `scripts/remote-demo/phone-ssh.mjs --target <client>`
   runs the SSH path of the Remote page from the phone against a saved client (provisioning, sessions, long poll).
+- pi-serverd's conversations can use another space server's Space for their space tools
+  (`PI_SERVERD_AGENT_SPACE`, `PI_SERVERD_AGENT_SPACE_NAME`): pi-serverd is one agent host there (role `agentHost`),
+  each conversation its own agent with its own mailbox, and an event pump hands its events over once, also after a
+  restart (`~/.pi-serverd/agent-space.json`). [docs/spaces.md](docs/spaces.md); test in `runtime/test-remote-space.mjs`.
+  The scripted model (`PI_TEST_FAUX`) also knows `!wait <type>` and `!notify <type>`.
 - Fix: the APK did not package `runtime/remote-calls.mjs`, so the app's node exited on start;
   `scripts/prepare-runtime.py` now refuses a packaged module that imports an unpackaged sibling.
 - [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
