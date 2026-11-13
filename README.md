@@ -215,7 +215,7 @@ phone's agent host path: `runtime/test-remote-space.mjs`.
 
 ## App screens
 
-Screenshots from a phone (SSH key and host addresses blacked out).
+Screenshots from a phone (SSH key, device ID and host addresses blacked out).
 
 | Chat | Remote (connected) |
 |---|---|
@@ -231,6 +231,11 @@ Screenshots from a phone (SSH key and host addresses blacked out).
 |---|
 | <img src="docs/screens/clients.png" width="260" alt="Clients page"> |
 | SSH key of this device and the list of remote hosts, each with terminal (**▸_**, starts pi CLI ssh), key-install and remove buttons. |
+
+| Spaces (paired) | Spaces: remote sessions | Spaces-Steuerung |
+|---|---|---|
+| <img src="docs/screens/spaces.png" width="260" alt="Spaces page, paired"> | <img src="docs/screens/spaces-remote.png" width="260" alt="Spaces page, remote sessions over a Space"> | <img src="docs/screens/spaces-control.png" width="260" alt="Spaces control, overview tab"> |
+| The status card of a paired device (device, coordinator, chosen Space) and step 3, the data host and Space to open; **Space öffnen** reads it, the link below opens the control page. | Step 4: the agent host whose sessions the **Remote** page reaches without SSH (host ID, endpoint, Space of the sessions, usually `remote`), and **Erweitert** (key proof, key renewal). | The control page's tabs (Übersicht, Läufe, Worker, Spaces, Mehr); the overview lists the coordinator's alerts and the commands this device sent. Every field: [docs/steuerung.md](docs/steuerung.md). |
 
 ## Accounts: API keys and OAuth
 
