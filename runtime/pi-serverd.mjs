@@ -184,7 +184,7 @@ async function chatMember(sessionId, member, args, c) {
 }
 
 /** One sessions member. The phone keeps the session it attached and names it in its chat calls. */
-async function sessionsMember(member, args, c) {
+async function sessionsMember(member, args, c, callId) {
   const call = { member, args };
   switch (call.member) {
     case 'list':
@@ -195,9 +195,12 @@ async function sessionsMember(member, args, c) {
     }
     case 'create': {
       const opts = call.args[0] ?? {};
+      // once per request: a call whose host died after creating comes back with the same callId (an explicit
+      // requestId of the client goes first), and gets the session created then
+      const requestId = typeof opts.requestId === 'string' && opts.requestId ? opts.requestId.slice(0, 128) : callId;
       const conv = await sessions.create(
         { name: typeof opts.name === 'string' ? opts.name.slice(0, 100) : undefined, cwd: WORKDIR },
-        { agent: { model: await pickModel(models) } },
+        { agent: { model: await pickModel(models) }, requestId },
       );
       return { id: String(conv.id) };
     }
@@ -233,8 +236,8 @@ async function sessionsMember(member, args, c) {
 
 // --- the sockets -------------------------------------------------------------------------
 
-const handleCall = ({ service, session, member, args }) => service === 'sessions'
-  ? sessionsMember(member, args, agentContext(ctx)) : chatMember(session, member, args, agentContext(ctx));
+const handleCall = ({ service, callId, session, member, args }) => service === 'sessions'
+  ? sessionsMember(member, args, agentContext(ctx), callId) : chatMember(session, member, args, agentContext(ctx));
 const onCallError = (e) => console.error('remote calls:', e?.message || e);
 // A long poll of `events` holds a worker for its 25 s: 16 serve that many polling clients at once, one more call waits
 const CALL_WORKERS = 16;

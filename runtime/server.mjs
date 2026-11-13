@@ -578,7 +578,7 @@ async function handleApi(req, res, url, p) {
       case 'POST /api/remote/model':
         if (!body.provider || !body.modelId) return json(res, 400, { error: 'provider+modelId required' });
         return json(res, 200, await remote.request('configure', [{ model: { provider: str(body.provider), modelId: str(body.modelId) } }]));
-      case 'POST /api/remote/create': return json(res, 200, await remote.create({ name: str(body.name, 100) || undefined }));
+      case 'POST /api/remote/create': return json(res, 200, await remote.create({ name: str(body.name, 100) || undefined, requestId: str(body.requestId, 128) || undefined }));
       case 'POST /api/remote/rename':
         return json(res, 200, await remote.rename(str(body.id), str(body.name, 100)));
       case 'POST /api/remote/delete':

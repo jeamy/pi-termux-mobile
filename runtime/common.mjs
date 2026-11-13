@@ -307,11 +307,17 @@ export function sessionStore(harness, ctx) {
     register: (id, meta) => commit((reg) => {
       if (!reg.sessions[String(id)]) reg.sessions[String(id)] = { created: new Date().toISOString(), ...defined(meta) };
     }),
-    /** Create a conversation and its registry entry in one commit. */
-    async create(meta, { agent, fork } = {}) {
+    /** Create a conversation and its registry entry in one commit. With `requestId`, once: a second create with the
+     *  same id returns the session the first one made (kept as `createRequest` in its registry entry). */
+    async create(meta, { agent, fork, requestId } = {}) {
+      if (requestId) {
+        const known = Object.entries((await registryOf()).sessions).find(([, s]) => s.createRequest === requestId);
+        const conv = known && await harness.conversation(Number(known[0]), ctx);
+        if (conv) return conv;
+      }
       const init = async (tx, id) => {
         const reg = await tx.doc(SessionRegistry);
-        reg.sessions[String(id)] = { created: new Date().toISOString(), ...defined(meta) };
+        reg.sessions[String(id)] = { created: new Date().toISOString(), ...defined(meta), ...(requestId ? { createRequest: requestId } : {}) };
       };
       if (fork) return fork.conv.fork(fork.entryId, { ownership: { kind: 'ownerless' }, init }, ctx);
       return harness.createConversation({ ownership: { kind: 'ownerless' }, agent, init }, ctx);

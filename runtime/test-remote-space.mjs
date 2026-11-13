@@ -199,3 +199,26 @@ test('pi-serverd conversations use another server\'s space as agents of one host
   await writer.write({ type: 'Late', fields: { n: 3 } }, null, 600_000);
   await historyWith(c.remote, /\[space event[^"]*Late/, log);
 });
+
+test('a create that comes back (its host died before answering) makes one session; a requestId of the client goes first', { timeout: 120_000 }, async (t) => {
+  const dir = tmp(t), spec = await spaceServer(t, dir);
+  const log = await daemon(t, dir, spec);
+  const phone = client(t, spec);
+  const remote = remoteOverSpace(phone, { timeoutMs: 30_000 });
+  t.later(() => remote.disconnect());
+  // the same RemoteCall twice, as when the first host took it, created the session and died before its answer
+  const once = async (callId, args) => {
+    await phone.write({ type: CALL, fields: { callId, session: null, member: 'create', args } }, null, 300_000);
+    const answer = await phone.take({ type: 'RemoteAnswer', fields: { callId, last: true } }, 30_000);
+    assert.ok(answer, log());
+    return JSON.parse(answer.fields.text).result.id;
+  };
+  const first = await once('c-again', [{ name: 'eins' }]);
+  assert.equal(await once('c-again', [{ name: 'eins' }]), first, 'the call that came back gets the same session');
+  assert.equal((await remote.list()).sessions.length, 1);
+  // two calls with one requestId (the client tried again after a timeout): one session; another requestId: a new one
+  const a = await remote.create({ name: 'zwei', requestId: 'r-1' });
+  assert.deepEqual(await remote.create({ name: 'zwei', requestId: 'r-1' }), a);
+  assert.notEqual((await remote.create({ name: 'drei' })).id, a.id);
+  assert.equal((await remote.list()).sessions.length, 3);
+});

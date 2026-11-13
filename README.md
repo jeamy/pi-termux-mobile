@@ -509,6 +509,8 @@ See ANALYSE.md for the full evaluation and upstream facts.
   store `home/.pi-mobile/space-server.sqlite`, unix socket only), and the phone's chat sessions get the space tools
   there, each its own agent (`PI_MOBILE_SPACE`). Checked on the phone: kill -9 of either process, force-stop, two
   minutes of forced deep idle. [docs/spaces.md](docs/spaces.md).
+- `create` of a remote session happens once per request: a call that comes back after its host died (same `callId`)
+  or a client `requestId` sent twice returns the session made the first time (`createRequest` in the session registry).
 - Fix: the APK did not package `runtime/remote-calls.mjs`, so the app's node exited on start;
   `scripts/prepare-runtime.py` now refuses a packaged module that imports an unpackaged sibling.
 - [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
