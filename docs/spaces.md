@@ -103,6 +103,28 @@ etwa `space-server --agent-host` oder `phi-space-server --agent-host`.
 Der Test `runtime/test-remote-space.mjs` prüft das gegen den TypeScript-Server und, mit `PHI_SPACES_SERVER_CMD`,
 gegen den Rust-Server.
 
+### Der eigene Space-Server des Handys
+
+Die App bringt den Rust-Space-Server `phi-space-server` mit (`runtime/bin/phi-space-server`, beim Bauen aus dem
+phi-spaces-Checkout gebaut; M1 in phi-spaces `docs/m1-mobile.en.md`). Der Dienst der App (`PiService`) startet ihn
+neben node als eigenen Prozess und startet ihn neu, wenn er endet (Wartezeit 1 s, verdoppelt bis 30 s).
+
+- Speicher: `home/.pi-mobile/space-server.sqlite` in den Dateien der App. Ein Neustart behält die Daten.
+- Erreichbar nur über den Unix-Socket `home/.pi-mobile/space-server.sock`, nicht über das Netz.
+- Die Chat-Sitzungen des Handys bekommen damit die Space-Werkzeuge, jede als eigener Agent (wie oben bei pi-serverd);
+  die beobachteten Sitzungen stehen in `home/.pi-mobile/agent-space.json`. Ist der Server gerade nicht erreichbar,
+  läuft der Chat weiter; der Prompt sagt dann „unreachable now“.
+- Ein Absturz von node lässt den Space-Server weiterlaufen, und umgekehrt.
+- Protokoll: `log/space-server.log`; Neustarts stehen in `log/service-error.txt`.
+- Ein APK ohne die Datei (`PHI_SPACE_SERVER_SKIP=1` beim Bauen, oder ohne phi-spaces-Checkout, NDK oder cargo)
+  verhält sich wie bisher: kein Space-Server, keine Space-Werkzeuge im Chat.
+
+Auf dem Handy geprüft (2026-11-13): `kill -9` des Servers (zurück nach einer Sekunde, Daten erhalten), `kill -9` von
+node (Server läuft weiter), Beenden der App und Neustart (je ein Prozess), und zwei Minuten erzwungener Tiefschlaf
+(`dumpsys deviceidle force-idle`, Akku als nicht angesteckt): Bridge und Space-Server antworteten weiter. Der Dienst
+läuft im Vordergrund mit einem Partial-Wakelock; eine Ausnahme von der Akku-Optimierung braucht er dafür nicht.
+Herstellereigene Energiesparfunktionen können Apps trotzdem beenden; das lässt sich mit `dumpsys` nicht prüfen.
+
 ## Gekoppelt: was man tun kann
 
 | Knopf | Wirkung |

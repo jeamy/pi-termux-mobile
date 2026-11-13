@@ -15,7 +15,7 @@ import {
   ConversationTranscript, Harness,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { openDurableSqliteStorage } from './phi-spaces.mjs';
+import { RemoteSpace, connectSpace, eventPump, openDurableSqliteStorage, remoteSpaces } from './phi-spaces.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -239,6 +239,38 @@ export const SessionRegistry = defineDoc({
 // phi-spaces shared space; refreshed automatically by phi-spaces bundle and the Android pre-build task.
 // The space has its own store (space.sqlite): it outlives the agent sessions' harness; the agents' space tools act on it.
 export { agentContext, createSpaces, localSpaces, openSqliteHost, startService as startSpaceService, withEventSink } from './phi-spaces.mjs';
+
+/**
+ * The conversations' space tools on another space server's Space (`spec` `unix:/path` or `tcp:host:port`, `name` a
+ * named Space there), reached as one agent host: that connection needs the role agentHost (`space-server
+ * --agent-host`, `phi-space-server --agent-host`). Each conversation acts there as its own agent `conversation-<id>`,
+ * and an event pump hands its mailbox's events to it once (phi-spaces remoteSpaces/eventPump, docs/m1-mobile.en.md).
+ * The conversations that used it are kept in `watchFile`, so a restart watches them again; a file of another server
+ * or Space is not taken over. Order: `spaces` into createSpaces, `attach(harness)` before harness.resume() (a resumed
+ * tool call may already use the space), `resume()` after it, `stop()` on shutdown.
+ */
+export function agentSpace({ spec, name, watchFile, peerId, label = 'agent space' }) {
+  const link = connectSpace(spec, { callTimeoutMs: 60_000 });
+  const open = (agent) => new RemoteSpace(link.transport, { callTimeoutMs: 60_000, attempts: 3,
+    ...(name ? { space: name } : {}), ...(agent === undefined ? {} : { agent }) });
+  let pump = null;
+  const watch = (id) => {
+    if (!pump || pump.watched.includes(id)) return;
+    pump.watch(id);
+    // the conversations whose loop ended (gone) drop out here
+    writeFileAtomic(watchFile, JSON.stringify({ space: spec, name: name ?? null, conversations: pump.watched }), 0o600);
+  };
+  return {
+    spaces: remoteSpaces(open, { peerId, onUse: watch }),
+    attach(harness) { pump = eventPump(open, harness, { onError: (e) => console.error(`${label} events:`, e?.message || e) }); },
+    resume() {
+      const kept = readJson(watchFile, null);
+      if (kept && kept.space === spec && (kept.name ?? null) === (name ?? null)) for (const id of kept.conversations ?? []) watch(id);
+      return pump.watched.length;
+    },
+    async stop() { try { await pump?.stop(); } finally { link.close(); } },
+  };
+}
 
 export async function openHarness({ dbPath, models, env, extensions = [] }, ctx) {
   const registry = createRegistry();

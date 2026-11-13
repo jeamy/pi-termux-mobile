@@ -12,27 +12,34 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { SpaceService, StaticIdentity, connectSpace, openOwnMemoryHost, serveSpace, startService } from './phi-spaces.mjs';
+import { SpaceService, StaticIdentity, connectSpace, openOwnMemoryHost, openSqliteHost, serveSpace, startService } from './phi-spaces.mjs';
 import { CALL, callRemote, remoteOverSpace, serveRemoteCalls } from './remote-calls.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const OTHER = process.env.PHI_SPACES_SERVER_CMD?.trim().split(/\s+/);
 
-/** A space server on a unix socket in `dir`; closed after the test. */
-async function spaceServer(t, dir) {
-  const sock = path.join(dir, 'space.sock');
-  if (OTHER) {
-    const child = spawn(OTHER[0], [...OTHER.slice(1), '--store', 'memory', '--listen', `unix:${sock}`, '--agent-host'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
-    t.later(async () => { if (child.exitCode === null) { const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; } });
-    for (const deadline = Date.now() + 10_000; !out.includes('ready on');) { assert.ok(Date.now() < deadline, `space server did not start: ${out}`); await sleep(25); }
-  } else {
-    const host = openOwnMemoryHost();
-    const stop = await startService(host, ctx);
-    const server = await serveSpace(new SpaceService({ host, ctx, identity: new StaticIdentity({ local: { principal: { peerId: 'local' }, roles: ['member', 'agentHost'] } }) }), { listen: { path: sock }, connection: () => ({ peerId: 'local' }) });
-    t.later(async () => { await server.close(); await stop(); await host.close(ctx); });
-  }
+/** A space server on a unix socket in `dir`; closed after the test. With `o.file` it keeps its store in a file, and
+ *  `t.restartSpace()` stops it (the program with SIGKILL) and starts it again on the same socket and file. */
+async function spaceServer(t, dir, o = {}) {
+  const sock = path.join(dir, 'space.sock'), store = o.file ? path.join(dir, 'space.sqlite') : null;
+  let stop;
+  const start = async () => {
+    if (OTHER) {
+      const child = spawn(OTHER[0], [...OTHER.slice(1), '--store', store ?? 'memory', '--listen', `unix:${sock}`, '--agent-host'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
+      stop = async (signal = 'SIGTERM') => { if (child.exitCode === null && child.signalCode === null) { const closed = once(child, 'close'); child.kill(signal); await closed; } };
+      for (const deadline = Date.now() + 10_000; !out.includes('ready on');) { assert.ok(Date.now() < deadline, `space server did not start: ${out}`); await sleep(25); }
+    } else {
+      const host = store ? await openSqliteHost(store) : openOwnMemoryHost();
+      const reaper = await startService(host, ctx);
+      const server = await serveSpace(new SpaceService({ host, ctx, identity: new StaticIdentity({ local: { principal: { peerId: 'local' }, roles: ['member', 'agentHost'] } }) }), { listen: { path: sock }, connection: () => ({ peerId: 'local' }) });
+      stop = async () => { await server.close(); await reaper(); await host.close(ctx); };
+    }
+  };
+  await start();
+  t.restartSpace = async () => { await stop('SIGKILL'); await start(); };
+  t.later(() => stop());
   return `unix:${sock}`;
 }
 
@@ -155,7 +162,7 @@ async function historyWith(remote, pattern, log) {
 }
 
 test('pi-serverd conversations use another server\'s space as agents of one host, and get its events after a restart', { timeout: 120_000 }, async (t) => {
-  const dir = tmp(t), spec = await spaceServer(t, dir);
+  const dir = tmp(t), spec = await spaceServer(t, dir, { file: true });
   const writer = client(t, spec);
   const opts = { env: { PI_SERVERD_AGENT_SPACE: spec }, ready: 'conversations use the space' };
   const conversations = () => {
@@ -184,4 +191,11 @@ test('pi-serverd conversations use another server\'s space as agents of one host
   await c.remote.attach(id);
   const text = await historyWith(c.remote, /\[space event/, log);
   assert.equal(text.match(/"role":"user","content":"\[space event/g)?.length, 1, 'handed over once, as one input');
+  // the space server dies and comes back on its file: the agent host's connection is opened again, the tools and the
+  // pump go on (a second subscription, an entry written after the restart)
+  await t.restartSpace();
+  await c.remote.request('prompt', [{ message: '!notify Late', requestId: randomUUID() }]);
+  await historyWith(c.remote, /tool said: .*(notif|subscri).*tool said: .*(notif|subscri)/is, log);
+  await writer.write({ type: 'Late', fields: { n: 3 } }, null, 600_000);
+  await historyWith(c.remote, /\[space event[^"]*Late/, log);
 });

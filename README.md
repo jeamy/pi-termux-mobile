@@ -503,6 +503,12 @@ See ANALYSE.md for the full evaluation and upstream facts.
   each conversation its own agent with its own mailbox, and an event pump hands its events over once, also after a
   restart (`~/.pi-serverd/agent-space.json`). [docs/spaces.md](docs/spaces.md); test in `runtime/test-remote-space.mjs`.
   The scripted model (`PI_TEST_FAUX`) also knows `!wait <type>` and `!notify <type>`.
+- The phone runs its own space server: the APK carries `phi-space-server` (Rust, built for aarch64-linux-android by
+  `scripts/prepare-runtime.py` from the phi-spaces checkout, stripped into `runtime/bin/`, not committed;
+  `PHI_SPACE_SERVER_SKIP=1` leaves it out). `PiService` supervises it beside node (own process, restart with backoff,
+  store `home/.pi-mobile/space-server.sqlite`, unix socket only), and the phone's chat sessions get the space tools
+  there, each its own agent (`PI_MOBILE_SPACE`). Checked on the phone: kill -9 of either process, force-stop, two
+  minutes of forced deep idle. [docs/spaces.md](docs/spaces.md).
 - Fix: the APK did not package `runtime/remote-calls.mjs`, so the app's node exited on start;
   `scripts/prepare-runtime.py` now refuses a packaged module that imports an unpackaged sibling.
 - [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,

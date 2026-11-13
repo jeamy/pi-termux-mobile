@@ -17,12 +17,12 @@ import { fileURLToPath } from 'node:url';
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { SpaceService, StaticIdentity, startConfiguredFederation, PhiSpaces, RemoteSpace, connectSpace, createSpace, eventPump, openOwnMemoryHost, remoteSpaces, serveSpace, startService } from './phi-spaces.mjs';
+import { SpaceService, StaticIdentity, startConfiguredFederation, PhiSpaces, connectSpace, createSpace, openOwnMemoryHost, serveSpace, startService } from './phi-spaces.mjs';
 import { serveRemoteCalls } from './remote-calls.mjs';
 import {
   acquireOwnerLock, agentContext, createCredentialStore, createEventHub, createModelCatalog,
   ensureModel, isBusy, openHarness, pickModel, readJson, requestIdOf, sessionStore, Subagent,
-  whenBusyOf, writeFileAtomic, createSpaces, localSpaces, openSqliteHost, startSpaceService, withEventSink,
+  whenBusyOf, writeFileAtomic, agentSpace, createSpaces, localSpaces, openSqliteHost, startSpaceService, withEventSink,
 } from './common.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -65,27 +65,12 @@ const models = await createModelCatalog(credentials);
 const env = new NodeExecutionEnv({ cwd: WORKDIR, env: process.env });
 const space = await openSqliteHost(SPACE_DB);
 // The conversations' space tools: this daemon's own space, or with PI_SERVERD_AGENT_SPACE (`unix:/path` or
-// `tcp:host:port`, PI_SERVERD_AGENT_SPACE_NAME a named Space there) another space server's, reached as one agent host
-// (that connection needs the role agentHost, e.g. `space-server --agent-host`). There each conversation acts as its own
-// agent `conversation-<id>`, and an event pump hands its mailbox's events to it (phi-spaces remoteSpaces/eventPump,
-// docs/m1-mobile.en.md). The conversations that used it are kept in agent-space.json, so a restart watches them again.
+// `tcp:host:port`, PI_SERVERD_AGENT_SPACE_NAME a named Space there) another space server's (agentSpace in common.mjs).
 const agentSpec = process.env.PI_SERVERD_AGENT_SPACE;
 const agentSpaceName = process.env.PI_SERVERD_AGENT_SPACE_NAME || undefined;
-const AGENT_WATCH = `${STATE_DIR}/agent-space.json`;
-let agentLink = null, pump = null;
-function watchAgent(id) {
-  if (!pump || pump.watched.includes(id)) return;
-  pump.watch(id);
-  // the conversations whose loop ended (gone) drop out here
-  writeFileAtomic(AGENT_WATCH, JSON.stringify({ space: agentSpec, name: agentSpaceName ?? null, conversations: pump.watched }), 0o600);
-}
-let openAgent = null;
-if (agentSpec) {
-  agentLink = connectSpace(agentSpec, { callTimeoutMs: 60_000 });
-  openAgent = (agent) => new RemoteSpace(agentLink.transport, { callTimeoutMs: 60_000, attempts: 3,
-    ...(agentSpaceName ? { space: agentSpaceName } : {}), ...(agent === undefined ? {} : { agent }) });
-}
-const Spaces = createSpaces(agentSpec ? remoteSpaces(openAgent, { peerId: process.env.PI_SERVERD_AGENT_PEER, onUse: watchAgent }) : localSpaces(space));
+const agent = agentSpec ? agentSpace({ spec: agentSpec, name: agentSpaceName, watchFile: `${STATE_DIR}/agent-space.json`,
+  peerId: process.env.PI_SERVERD_AGENT_PEER, label: 'pi-serverd: agent space' }) : null;
+const Spaces = createSpaces(agent ? agent.spaces : localSpaces(space));
 const harness = await openHarness({
   dbPath: DB,
   models,
@@ -94,7 +79,7 @@ const harness = await openHarness({
 }, ctx);
 const sessions = sessionStore(harness, ctx);
 // before the harness resumes: a resumed tool call may already use the agent space
-if (agentSpec) pump = eventPump(openAgent, harness, { onError: (e) => console.error('pi-serverd: agent space events:', e?.message || e) });
+agent?.attach(harness);
 
 // one-time import of the old JSON manifest
 {
@@ -110,12 +95,7 @@ const federation = process.env.PI_SERVERD_FEDERATION_CONFIG
   ? await startConfiguredFederation(withEventSink(space, harness), ctx, process.env.PI_SERVERD_FEDERATION_CONFIG) : null;
 if (existsSync(`${STATE_DIR}/restart.lock`)) throw new Error("restart lock was installed during boot");
 harness.resume();
-if (agentSpec) {
-  const kept = readJson(AGENT_WATCH, null);
-  // mailboxes of another server or Space are not this one's
-  if (kept && kept.space === agentSpec && (kept.name ?? null) === (agentSpaceName ?? null)) for (const id of kept.conversations ?? []) watchAgent(id);
-  console.log(`pi-serverd: conversations use the space at ${agentSpec}${agentSpaceName ? ` (${agentSpaceName})` : ''}, ${pump.watched.length} watched`);
-}
+if (agent) console.log(`pi-serverd: conversations use the space at ${agentSpec}${agentSpaceName ? ` (${agentSpaceName})` : ''}, ${agent.resume()} watched`);
 // reaper + delivery of the space's events into the sessions
 const stopSpaces = federation ? () => federation.close() : await startSpaceService(withEventSink(space, harness), ctx);
 
@@ -309,7 +289,7 @@ async function shutdown(signal) {
   console.log(`pi-serverd: ${signal}, closing`);
   try { await callsServer.close(); await spaceServer?.close(); } catch {}
   try { await Promise.all(calls.map((c) => c.stop())); remoteLink?.close(); } catch {}
-  try { await pump?.stop(); agentLink?.close(); } catch {}
+  try { await agent?.stop(); } catch {}
   try { await stopCallsReaper(); await callsStore.close(ctx); } catch {}
   try { await events.close(); } catch {}
   try { await stopSpaces(); } catch {}

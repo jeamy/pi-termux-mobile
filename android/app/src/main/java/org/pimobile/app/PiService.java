@@ -34,6 +34,11 @@ import java.util.regex.Pattern;
  * startForegroundService(); that must not restart a running bridge, because
  * a restart interrupts the agent's running tool calls and pi-durable allows a
  * single storage owner. A supervisor restarts node with backoff if it dies.
+ *
+ * Beside node runs the phone's space server, runtime/bin/phi-space-server (M1, phi-spaces docs/m1-mobile.en.md), when
+ * the APK carries it: its own process with its own supervisor, so a node restart or crash leaves the space running.
+ * It keeps its store in home/.pi-mobile/space-server.sqlite and listens only on the unix socket
+ * home/.pi-mobile/space-server.sock, which node reaches as the agent host (PI_MOBILE_SPACE).
  */
 public final class PiService extends Service {
 
@@ -43,6 +48,8 @@ public final class PiService extends Service {
     private final Object lock = new Object();
     private Process nodeProcess;
     private Thread supervisor;
+    private Process spaceProcess;
+    private Thread spaceSupervisor;
     private volatile boolean stopping;
     private PowerManager.WakeLock wakeLock;
     private SpaceKeyStore spaceKeys;
@@ -69,6 +76,7 @@ public final class PiService extends Service {
         try {
             if (!RuntimeInstaller.isInstalled(this)) {
                 terminateOrphanServer(); // must not run while its files are replaced
+                terminateOrphans("phi-space-server");
                 RuntimeInstaller.install(this);
             }
         } catch (Exception e) {
@@ -76,32 +84,72 @@ public final class PiService extends Service {
             stopSelf();
             return;
         }
+        if (spaceBinary().isFile()) {
+            synchronized (lock) {
+                if (!stopping && (spaceSupervisor == null || !spaceSupervisor.isAlive())) {
+                    spaceSupervisor = new Thread(() -> superviseLoop("space server", this::startSpaceServer, true), "pi-space-supervisor");
+                    spaceSupervisor.start();
+                }
+            }
+        }
+        superviseLoop("node", this::startNode, false);
+    }
+
+    private interface Starter { Process start() throws IOException; }
+
+    /** Keeps one process alive: restarts it with backoff (1 s doubling to 30 s, quick again after a minute's run). */
+    private void superviseLoop(String name, Starter starter, boolean space) {
         long backoff = 1000;
         while (!stopping) {
             long started = System.currentTimeMillis();
             Process p;
             try {
-                p = startNode();
+                p = starter.start();
             } catch (Exception e) {
-                logError("node start failed", e);
+                logError(name + " start failed", e);
                 p = null;
             }
             if (p != null) {
-                synchronized (lock) { nodeProcess = p; }
+                synchronized (lock) { if (space) spaceProcess = p; else nodeProcess = p; }
                 try {
                     int code = p.waitFor();
-                    if (!stopping) logError("node exited " + code + "; restarting", null);
+                    if (!stopping) logError(name + " exited " + code + "; restarting", null);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     return;
                 }
-                synchronized (lock) { if (nodeProcess == p) nodeProcess = null; }
+                synchronized (lock) { if (space) { if (spaceProcess == p) spaceProcess = null; } else if (nodeProcess == p) nodeProcess = null; }
             }
             if (stopping) return;
             // a process that ran for a while gets a quick restart again
             if (System.currentTimeMillis() - started > 60_000) backoff = 1000;
             try { Thread.sleep(backoff); } catch (InterruptedException ie) { return; }
             backoff = Math.min(backoff * 2, 30_000);
+        }
+    }
+
+    private File spaceBinary() { return new File(new File(new File(getFilesDir(), "runtime"), "bin"), "phi-space-server"); }
+    private File spaceSocket() { return new File(new File(new File(getFilesDir(), "home"), ".pi-mobile"), "space-server.sock"); }
+
+    private Process startSpaceServer() throws IOException {
+        terminateOrphans("phi-space-server"); // one left from a killed app process holds the store
+        File state = spaceSocket().getParentFile();
+        state.mkdirs();
+        List<String> cmd = new ArrayList<>();
+        cmd.add(spaceBinary().getAbsolutePath());
+        cmd.add("--store"); cmd.add(new File(state, "space-server.sqlite").getAbsolutePath());
+        cmd.add("--listen"); cmd.add("unix:" + spaceSocket().getAbsolutePath());
+        cmd.add("--peer"); cmd.add("phone");
+        cmd.add("--agent-host");
+        Map<String, String> env = new HashMap<>();
+        env.put("HOME", new File(getFilesDir(), "home").getAbsolutePath());
+        env.put("TMPDIR", new File(getFilesDir(), "tmp").getAbsolutePath());
+        File log = new File(getFilesDir(), "log/space-server.log");
+        try {
+            return spawn(cmd, env, state, log);
+        } catch (IOException directFailed) {
+            cmd.add(0, "/system/bin/linker64");
+            return spawn(cmd, env, state, log);
         }
     }
 
@@ -125,6 +173,7 @@ public final class PiService extends Service {
         env.put("OPENSSL_CONF", new File(prefix, "etc/tls/openssl.cnf").getAbsolutePath());
         env.put("SSL_CERT_FILE", new File(prefix, "etc/tls/cert.pem").getAbsolutePath());
         env.put("PHI_SPACES_KEY_SOCKET", SpaceKeyStore.socketName());
+        if (spaceBinary().isFile()) env.put("PI_MOBILE_SPACE", "unix:" + spaceSocket().getAbsolutePath());
 
         // a stale port file would make the UI load a dead bridge address
         new File(new File(home, ".pi-mobile"), "port").delete();
@@ -136,18 +185,19 @@ public final class PiService extends Service {
         cmd.add(node);
         cmd.add(server);
         try {
-            return spawn(cmd, env, home);
+            return spawn(cmd, env, home, nodeLog());
         } catch (IOException directFailed) {
             // targetSdk >= 29 on Android 10+: exec of app-private files is
             // blocked -> run the ELF through the system dynamic linker.
             cmd.set(0, "/system/bin/linker64");
             cmd.add(1, node);
-            return spawn(cmd, env, home);
+            return spawn(cmd, env, home, nodeLog());
         }
     }
 
-    private Process spawn(List<String> cmd, Map<String, String> env, File cwd) throws IOException {
-        File log = new File(getFilesDir(), "log/node.log");
+    private File nodeLog() { return new File(getFilesDir(), "log/node.log"); }
+
+    private Process spawn(List<String> cmd, Map<String, String> env, File cwd, File log) throws IOException {
         log.getParentFile().mkdirs();
         rotateLog(log);
         ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -191,6 +241,16 @@ public final class PiService extends Service {
         }
     }
 
+    /** SIGTERM (the binary closes its store and exits), wait, then kill. After node, which uses it. */
+    private void stopSpaceServer() {
+        Process p;
+        synchronized (lock) { p = spaceProcess; }
+        if (p == null) return;
+        terminateOrphans("phi-space-server"); // finds it by its command line: SIGTERM, then SIGKILL after 5 s
+        try { p.waitFor(1000, TimeUnit.MILLISECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        p.destroyForcibly();
+    }
+
     /** A node left over from a killed app process (same uid) still owns the storage. */
     private void terminateOrphanServer() {
         int pid = readServerPid();
@@ -200,6 +260,41 @@ public final class PiService extends Service {
             try { Thread.sleep(100); } catch (InterruptedException ie) { return; }
         }
         if (isServerProcess(pid)) android.os.Process.sendSignal(pid, 9);
+    }
+
+    /**
+     * Ends the processes of this app (same uid) whose command line runs a file of runtime/bin named `name`: SIGTERM,
+     * up to 5 s, then SIGKILL. Only those not supervised now (none is, when called).
+     */
+    private void terminateOrphans(String name) {
+        String path = new File(new File(new File(getFilesDir(), "runtime"), "bin"), name).getAbsolutePath();
+        List<Integer> pids = new ArrayList<>();
+        File[] procs = new File("/proc").listFiles();
+        if (procs == null) return;
+        int self = android.os.Process.myPid();
+        for (File d : procs) {
+            int pid;
+            try { pid = Integer.parseInt(d.getName()); } catch (NumberFormatException e) { continue; }
+            if (pid != self && cmdlineHas(pid, path)) pids.add(pid);
+        }
+        for (int pid : pids) { logError("ending a left-over " + name + " (pid " + pid + ")", null); android.os.Process.sendSignal(pid, 15); }
+        for (int i = 0; i < 50; i++) {
+            boolean alive = false;
+            for (int pid : pids) alive |= cmdlineHas(pid, path);
+            if (!alive) return;
+            try { Thread.sleep(100); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+        }
+        for (int pid : pids) if (cmdlineHas(pid, path)) android.os.Process.sendSignal(pid, 9);
+    }
+
+    private static boolean cmdlineHas(int pid, String text) {
+        try (FileInputStream in = new FileInputStream("/proc/" + pid + "/cmdline")) {
+            byte[] b = new byte[4096];
+            int n = in.read(b);
+            return n > 0 && new String(b, 0, n, "UTF-8").contains(text);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static boolean isServerProcess(int pid) {
@@ -281,10 +376,12 @@ public final class PiService extends Service {
     public void onDestroy() {
         stopping = true;
         if (spaceKeys != null) { spaceKeys.close(); spaceKeys = null; }
-        Thread sup;
-        synchronized (lock) { sup = supervisor; supervisor = null; }
+        Thread sup, spaceSup;
+        synchronized (lock) { sup = supervisor; supervisor = null; spaceSup = spaceSupervisor; spaceSupervisor = null; }
         stopNode();
         if (sup != null) sup.interrupt();
+        stopSpaceServer();
+        if (spaceSup != null) spaceSup.interrupt();
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();
     }

@@ -24,7 +24,7 @@ import { copyAuthTo, probeRemote, remoteBash, runtimeHash, stopRemoteServer } fr
 import {
   acquireOwnerLock, agentOf, createCredentialStore, createModelCatalog, ensureModel, isBusy,
   openHarness, pickModel, readJson, requestIdOf, sessionStore, Subagent, whenBusyOf,
-  writeFileAtomic,
+  writeFileAtomic, agentSpace, createSpaces,
 } from './common.mjs';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -169,7 +169,14 @@ function startOAuthLogin(providerId) {
 
 // --- harness + durable session registry ---------------------------------------------
 
-const harness = await openHarness({ dbPath: path.join(STATE_DIR, 'harness.sqlite'), models, env: envFor, extensions: [Subagent] }, ctx);
+// The phone's own space server (phi-space-server, started and kept alive by PiService beside this process, M1 in
+// phi-spaces docs/m1-mobile.en.md): with PI_MOBILE_SPACE (unix:/path), the conversations get the space tools there,
+// each its own agent of this host. Without it (an APK built without the binary) they have none, as before.
+const spaceSpec = process.env.PI_MOBILE_SPACE;
+const agent = spaceSpec ? agentSpace({ spec: spaceSpec, watchFile: path.join(STATE_DIR, 'agent-space.json'), peerId: 'phone', label: 'bridge: space' }) : null;
+const harness = await openHarness({ dbPath: path.join(STATE_DIR, 'harness.sqlite'), models, env: envFor,
+  extensions: agent ? [Subagent, createSpaces(agent.spaces)] : [Subagent] }, ctx);
+agent?.attach(harness);
 const sessions = sessionStore(harness, ctx);
 let active = null; // the conversation the chat page shows
 
@@ -189,6 +196,7 @@ async function initHarness() {
   await activate(conv, { persist: false });
   await ensureModel(active, models, ctx);
   harness.resume(); // continue runs the last process left unfinished
+  if (agent) console.log(`bridge: space tools on ${spaceSpec}, ${agent.resume()} conversations watched`);
 }
 
 async function activate(conversation, { persist = true } = {}) {
@@ -813,6 +821,7 @@ async function shutdown(signal) {
   server.close();
   for (const client of sseClients) { try { await client.stream?.stop(); client.res.end(); } catch {} }
   await remoteState.disconnect();
+  try { await agent?.stop(); } catch {}
   try { await harness.close(ctx); } catch (e) { console.error('harness.close:', e?.message || e); }
   releaseLock();
   process.exit(0);

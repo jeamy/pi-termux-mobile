@@ -42,6 +42,42 @@ if source_available:
                    env={**os.environ, 'PHI_SPACES_MOBILE_ROOT': str(ROOT)})
 if not (RUNTIME / 'phi-spaces.mjs').is_file():
     raise SystemExit('Required mobile bundle missing: phi-spaces.mjs; prepare it from a phi-spaces source checkout first')
+# The phone's space server (M1, phi-spaces docs/m1-mobile.en.md): phi-space-server for aarch64-linux-android, built
+# from the same checkout as phi-spaces.mjs so both speak the same wire, stripped into runtime/bin (not committed).
+# PiService runs it when the payload carries it; without it the app runs as before. PHI_SPACE_SERVER_SKIP=1 leaves it
+# out, PHI_SPACE_SERVER_BINARY names a binary built elsewhere.
+def space_server():
+    target = RUNTIME / 'bin/phi-space-server'
+    if os.environ.get('PHI_SPACE_SERVER_SKIP') == '1':
+        target.unlink(missing_ok=True)
+        print('phi-space-server left out (PHI_SPACE_SERVER_SKIP=1)', file=sys.stderr)
+        return
+    ndk = sorted((ROOT / 'tools/android-sdk/ndk').glob('*/toolchains/llvm/prebuilt/linux-x86_64/bin'))
+    built = os.environ.get('PHI_SPACE_SERVER_BINARY')
+    if not built and source_available and ndk and (SOURCE / 'rust/Cargo.toml').is_file():
+        bin_dir = ndk[-1]
+        clang = str(bin_dir / 'aarch64-linux-android24-clang')
+        subprocess.run(['cargo', 'build', '--release', '--locked', '--target', 'aarch64-linux-android', '-p', 'phi-space-server'],
+                       cwd=SOURCE / 'rust', check=True,
+                       env={**os.environ, 'CC_aarch64_linux_android': clang, 'AR_aarch64_linux_android': str(bin_dir / 'llvm-ar'),
+                            'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER': clang})
+        built = str(SOURCE / 'rust/target/aarch64-linux-android/release/phi-space-server')
+    if not built:
+        if not target.is_file():
+            print('WARNING: phi-space-server not built (no phi-spaces source, NDK or cargo); packaging without the space server',
+                  file=sys.stderr)
+        return
+    target.parent.mkdir(exist_ok=True)
+    tmp = target.with_suffix('.tmp')
+    strip = ndk[-1] / 'llvm-strip' if ndk else None
+    if strip and strip.is_file():
+        subprocess.run([str(strip), '-o', str(tmp), built], check=True)
+    else:
+        tmp.write_bytes(Path(built).read_bytes())
+    tmp.chmod(0o755)
+    replace_if_changed(tmp, target)
+    target.chmod(0o755)
+
 if (RUNTIME / 'space-examples').is_dir():
     FILES.append('space-examples')
 else:
@@ -72,6 +108,10 @@ def replace_if_changed(source, target):
         source.unlink()
     else:
         source.replace(target)
+
+space_server()
+if (RUNTIME / 'bin/phi-space-server').is_file():
+    FILES.append('bin')
 
 ASSETS.mkdir(parents=True, exist_ok=True)
 temporary = None
