@@ -4,7 +4,7 @@
 // host, connects the Remote page's state over the Space and runs one prompt. The phone's Android Keystore key, its
 // runtime and its network path to the coordinator are the real ones; no page is touched.
 //
-//   node phone.mjs --device 192.168.8.35:41205 --endpoint tcp://192.168.8.28:17460 --control b9-coord \
+//   node phone.mjs --device <adb-serial> --endpoint tcp://192.168.8.28:17460 --control b9-coord \
 //                  --peer phone-b9 --token-file <dir>/bootstrap-token.txt [--message "hallo"]
 //   --fresh: the coordinator's store is new, pair again even if the phone is set up for it
 //   node phone.mjs --device … --restore      puts the phone's previous Spaces profile back

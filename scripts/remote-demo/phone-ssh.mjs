@@ -4,7 +4,7 @@
 // needed, then lists, creates, attaches, reads state, history and an idle events long poll, renames and deletes a
 // session of its own. No model is called unless --prompt is given (the host's own credentials, it may cost tokens).
 //
-//   node phone-ssh.mjs --device 192.168.8.35:41205 --target lux@192.168.8.28 [--allow-update] [--prompt "text"]
+//   node phone-ssh.mjs --device <adb-serial> --target lux@192.168.8.28 [--allow-update] [--prompt "text"]
 //
 // --allow-update: a daemon that is running and outdated is replaced (running work on that host is interrupted);
 // without it the script stops and says so. auth.json is never copied to the host.

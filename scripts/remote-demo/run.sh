@@ -2,7 +2,7 @@
 # Remote-conversation demo over WLAN (docs/remote-demo.md): a LAN coordinator from phi-spaces, pi-serverd as the agent
 # host with the scripted model (no model calls, no cost), and the phone driven over adb.
 #
-#   scripts/remote-demo/run.sh --device 192.168.8.35:41205 [--lan 192.168.8.28] [--phone-ip 192.168.8.35]
+#   scripts/remote-demo/run.sh --device <adb-serial> --phone-ip <phone ip> [--lan 192.168.8.28]
 #                              [--phi-spaces ../phi-spaces] [--dir ~/phi-demo/remote-<time>] [--keep]
 #
 # --keep leaves coordinator and agent host running after the phone's part (Ctrl-C ends them), for trying the pages
@@ -11,7 +11,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-LAN=192.168.8.28 PHONE_IP=192.168.8.35 DEVICE="${ANDROID_SERIAL:-}" KEEP=0
+LAN=192.168.8.28 PHONE_IP= DEVICE="${ANDROID_SERIAL:-}" KEEP=0
 PHI="${PHI_SPACES_ROOT:-$ROOT/../phi-spaces}" DIR="$HOME/phi-demo/remote-$(date +%Y%m%d-%H%M%S)"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$DEVICE" ] || { echo "--device SERIAL is required (adb devices)" >&2; exit 2; }
+[ -n "$PHONE_IP" ] || { echo "--phone-ip is required (the phone\'s WLAN address; the coordinator pins the phone by it)" >&2; exit 2; }
 [ -f "$PHI/test/testbed/device/b9-coordinator.ts" ] || { echo "phi-spaces checkout not found at $PHI (--phi-spaces)" >&2; exit 2; }
 mkdir -p "$DIR/agent"
 echo "demo directory: $DIR"

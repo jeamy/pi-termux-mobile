@@ -60,7 +60,7 @@ conversations (`harness.sqlite`).
 - **Old data is not carried over.** A space kept in `harness.sqlite` by an earlier version is not migrated.
   A pi-durable store is refused by the new code (phi-spaces decision D6). The earlier namespace migration
   tool has been removed.
-- Device acceptance: on 2026-10-24 the shipped bundle ran on a Xiaomi M2007J17G with Node 26.4.0 from the app
+- Device acceptance: on 2026-10-24 the shipped bundle ran on an Android test phone with Node 26.4.0 from the app
   rootfs. `node:sqlite`, WAL, the eval worker and the own store all worked there. Mobile Spaces control was
   accepted again against this store (see [Spaces](#spaces-functions-and-pages)).
 
@@ -197,7 +197,7 @@ Each command ID is stored in the private profile before it is sent. After a time
 is asked again ("Ausgang erneut abfragen"), so a command is never started twice. Irreversible commands ask on the
 page first. Results are polled only while the page is visible. Every field: [docs/steuerung.md](docs/steuerung.md).
 
-Device acceptance on the Xiaomi M2007J17G against a coordinator in production composition over Wi-Fi: 2026-10-16
+Device acceptance on an Android test phone against a coordinator in production composition over Wi-Fi: 2026-10-16
 (still on pi-durable, also over NetBird) and 2026-10-24 on the own store (pair as admin, start/pause/resume/stop a
 sieve run, set workers, `SIGKILL` the coordinator and resend the same command ID: completed exactly once). Still
 open: NetBird with the own store, a coordinator on big, event tracking instead of polling.
@@ -513,9 +513,9 @@ every prompt carries a `requestId` so retries are exactly-once.
 
 Caveats on device:
 
-- MIUI kills the process aggressively in the background (foreground works
-  fine): Settings → Apps → pi mobile → battery saver "no restrictions" +
-  autostart.
+- Some vendor ROMs kill the process aggressively in the background (foreground works
+  fine): set the app's battery saver to "no restrictions" and allow autostart, where the
+  system offers these settings.
 - Android 12+: phantom-process killer may kill node/bash subprocesses;
   workaround needs `adb shell settings put global
   settings_enable_monitor_phantom_procs false` or the Android 14+ developer
@@ -651,7 +651,7 @@ mobile admin control, and a space store separate from pi-durable.
   export), workers, spaces, deployment plan/export, alerts and audit.
   - Command IDs are stored before sending and reused after a timeout, double
     tap or restart. Unsent commands are marked as unsent.
-- Device acceptance on a Xiaomi M2007J17G (2026-10-16, and 2026-10-24 on the own
+- Device acceptance on an Android test phone (2026-10-16, and 2026-10-24 on the own
   store).
 
 **Remote**

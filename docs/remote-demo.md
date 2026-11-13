@@ -28,7 +28,7 @@ Ein Unterschied zum Betrieb: Hier liegt der Space `remote` im Speicher des Koord
 
 ## Voraussetzungen
 
-- Das Handy ist per WLAN-adb erreichbar (`adb devices` zeigt es, z. B. `192.168.8.35:41205`), und die App ist
+- Das Handy ist per WLAN-adb erreichbar (`adb devices` zeigt es, z. B. `<ip>:<port>` oder ein `adb-…`-Name), und die App ist
   installiert und gestartet. Die Port-Datei der Brücke (`files/home/.pi-mobile/port`) gehört zu einem laufenden
   Prozess.
 - Ein phi-spaces-Checkout liegt neben diesem Repository (`../phi-spaces`), sonst mit `--phi-spaces` angeben. Seine
@@ -39,15 +39,15 @@ Ein Unterschied zum Betrieb: Hier liegt der Space `remote` im Speicher des Koord
 ## Ausführen
 
 ```sh
-scripts/remote-demo/run.sh --device 192.168.8.35:41205
-# Optionen: --lan 192.168.8.28 (Adresse des Rechners), --phone-ip 192.168.8.35, --phi-spaces ../phi-spaces,
+scripts/remote-demo/run.sh --device <adb-serial> --phone-ip <ip-des-handys>
+# Optionen: --lan 192.168.8.28 (Adresse des Rechners), --phi-spaces ../phi-spaces,
 #           --dir ~/phi-demo/remote-<Zeit> (Speicher, Schlüssel, Logs), --keep (Dienste laufen danach weiter)
 ```
 
 Danach das vorige Profil des Handys zurücklegen:
 
 ```sh
-node scripts/remote-demo/phone.mjs --device 192.168.8.35:41205 --restore
+node scripts/remote-demo/phone.mjs --device <adb-serial> --restore
 ```
 
 ## Ablauf
@@ -123,7 +123,7 @@ Client aus **Clients**. Durch den Tunnel erreicht es den Gesprächs-Socket von p
 Aufrufe über einen Space. Dabei laufen echte Rechner, echtes SSH und die Bereitstellung von pi-serverd auf dem Host.
 
 ```sh
-node scripts/remote-demo/phone-ssh.mjs --device 192.168.8.35:41205 --target lux@192.168.8.28 [--allow-update] [--prompt "Text"]
+node scripts/remote-demo/phone-ssh.mjs --device <adb-serial> --target lux@192.168.8.28 [--allow-update] [--prompt "Text"]
 ```
 
 1. `POST /api/remote/connect` mit `copyAuth: false`: Das Skript kopiert nie `auth.json` auf den Host.
