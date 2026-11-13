@@ -21,8 +21,8 @@ android {
         // (Android 10+ blocks exec in app home for targetSdk >= 29).
         // Sideload/F-Droid only; Play requires a higher targetSdk.
         targetSdk 28
-        versionCode 6
-        versionName '0.0.6'
+        versionCode 8
+        versionName '0.0.8'
     }
 
     // Optional native UI acceptance harness; excluded from ordinary debug/release APKs.

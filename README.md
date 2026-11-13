@@ -4,7 +4,7 @@
 > development. Remote sessions, the embedded Termux runtime, and Android
 > background-process handling may still change or fail on individual devices.
 >
-> **Version 0.0.7** — still quick & dirty, see the [changelog](#changelog).
+> **Version 0.0.8** — still quick & dirty, see the [changelog](#changelog).
 
 Minimal Android app that embeds Termux-built binaries (Node.js 26.4.0, bash,
 coreutils, git, ripgrep, fd, openssh, npm, util-linux `script`, …) plus a
@@ -49,8 +49,9 @@ conversations (`harness.sqlite`).
 
 - `pi-serverd.mjs` opens the space in `~/.pi-serverd/space.sqlite` (`openSqliteHost`), separate from
   `harness.sqlite`. The space survives a daemon or harness restart, and the reverse holds as well.
-- The agents' space tools act on that store through `createSpaces(localSpaces(space))`. `common.mjs`
-  re-exports `createSpaces`, `localSpaces`, `openSqliteHost`, `startSpaceService` and `withEventSink`.
+- The agents' space tools act on that store through `createSpaces(localSpaces(space))`, or with
+  `PI_SERVERD_AGENT_SPACE` on another space server (`agentSpace` in `common.mjs`, shared with the phone's chat).
+  `common.mjs` re-exports `createSpaces`, `localSpaces`, `openSqliteHost`, `startSpaceService` and `withEventSink`.
 - Every tool call carries a request identity: the conversation generation plus the task ID. A call repeated
   after a crash gets its first result. Blocking calls keep their original deadline. The old atomicity with the
   harness commit is gone (an intended API break in phi-spaces).
@@ -61,7 +62,7 @@ conversations (`harness.sqlite`).
   tool has been removed.
 - Device acceptance: on 2026-10-24 the shipped bundle ran on a Xiaomi M2007J17G with Node 26.4.0 from the app
   rootfs. `node:sqlite`, WAL, the eval worker and the own store all worked there. Mobile Spaces control was
-  accepted again against this store (see [Spaces pages](#spaces-pages)).
+  accepted again against this store (see [Spaces](#spaces-functions-and-pages)).
 
 ### phi-spaces namespace
 
@@ -96,7 +97,8 @@ and grants. Client request fields cannot override either identity.
 ## App pages
 
 - **Chat** (`/`) — durable pi conversation (prompt, abort, new session,
-  model dropdown). `pi mobile` header links back here from every page.
+  model dropdown), with the space tools on the phone's own space server (see [Spaces](#spaces-functions-and-pages)).
+  `pi mobile` header links back here from every page.
 - **Accounts** (`keys.html`) — API-key management plus OAuth/subscription
   sign-in. Credentials are stored as `~/.pi/agent/auth.json` in pi CLI format.
 - **Sessions** (`sessions.html`) — local durable-session browser: create,
@@ -112,51 +114,93 @@ and grants. Client request fields cannot override either identity.
   → `node cli.js`, with on-screen extra keys (esc/tab/ctrl/arrows/pgup/pgdn)
   for menus and scrollback. `?ssh=user@host` runs `ssh -tt <host> pi`
   instead — full remote pi TUI.
-- **Spaces** (`spaces.html`) — pair this device with a phi-spaces federation
-  and browse a data space (see below).
+- **Spaces** (`spaces.html`) — pair this device with a phi-spaces federation,
+  browse a data space and name an agent host for remote sessions over a Space (see below).
 - **Spaces-Steuerung** (`steuerung.html`) — admin control of runs, workers,
   spaces and deployment through the paired control connection (see below).
 
-## Spaces pages
+## Spaces: functions and pages
 
-**Spaces** prepares a P-256 device key in Android Keystore and pairs with an
-entered token/QR JSON. It checks pairing and authentication and resolves own-key
-rotation. It then connects to explicitly trusted control/data hosts over the
-overlay and shows the selected space's objects and statistics (read-only).
-Private keys are never exported. Request identities and public metadata are saved
-privately before sending; enrollment tokens are not persisted. There is no camera
-QR scanning yet. Native Keystore acceptance and a real phone–big pairing with
-object access and rotation are part of the phi-spaces phase 1b acceptance.
+A **space** (phi-spaces) is a shared store of entries `{type, fields}`. Agents and programs write entries, read or
+take them by template (absent fields are wildcards), group takes and writes in transactions, and wait for entries or
+subscribe to them. Each entry has a lease and vanishes when it runs out. The app uses spaces in four places:
 
-**Spaces-Steuerung** sends only approved admin commands (`admin`) through
-`spaces-mobile.mjs`:
+| Where | What runs there | Who uses it |
+|---|---|---|
+| **The phone's own space server** | `phi-space-server` (Rust) in the app, store `home/.pi-mobile/space-server.sqlite`, unix socket only | the phone's chat sessions, through the space tools |
+| **pi-serverd on a host** | its own store `~/.pi-serverd/space.sqlite`, or another space server with `PI_SERVERD_AGENT_SPACE` | that host's sessions, through the space tools |
+| **A space of a federation** | a data host of a phi-spaces federation, reached with the device key | the **Spaces** page (read), **Spaces-Steuerung** (admin commands) |
+| **A space for remote sessions** | a Space of the federation, often `remote` | the **Remote** page: sessions on a host without SSH |
 
-- **Operations and runs:** state, open ACKs, recovery views, pause/resume/stop,
-  and recovery decisions bound to the view hash. You can start a new sieve run,
-  view its result (`exportRun`) and schedule a pause or resume (`scheduleRun`).
-  Stop runs only after a preview (`dryRun`) that names the revision.
-- **Workers:** desired state against reported state, with its age; set the count.
-- **Spaces** (create, archive, reactivate, delete) and **Deployment** (plan,
-  export).
-- **Alerts** (`listAlerts`) and **Audit** (`auditLog`).
+### The space tools of a session
 
-Each command ID is stored in the private profile before it is sent. The same ID
-is reused after a timeout, double tap or restart, and the page then shows "outcome
-is being checked" instead of starting the command again. Results are polled only
-while the page is visible. Page requests are serialized on the client.
+Every chat session (on the phone, and in pi-serverd) has these tools. The model sees the number of entries in its
+prompt; when the space cannot be reached, the prompt says "unreachable now" and the session keeps running.
 
-Device acceptance on the Xiaomi M2007J17G, against a coordinator in production
-composition over Wi-Fi:
+| Tool | What it does |
+|---|---|
+| `space_write` | Writes an entry `{type, fields}`; `ttlMs` is its lease (default 1 hour, `"forever"`). |
+| `space_read` | Reads one matching entry without removing it, waiting up to `timeoutMs` (blocks the turn). |
+| `space_take` | Takes (removes) one matching entry; with `txn` the take is undone unless committed. |
+| `space_list` | Lists matching entries (up to 1000) without locking anything. |
+| `space_txn` | `begin`, `commit`, `abort` of a transaction for several writes and takes. |
+| `space_wait` | Waits for a matching entry **without blocking the turn**: the session gets a message when it arrives (a take-wait hands it over under a transaction) or when the wait times out. For long waits: hours, days, forever. |
+| `space_notify` | Subscribes to future writes of a type or fields; each one arrives as a message (at most one per second, bundled). |
+| `space_lease` | Renews or cancels a lease: an entry, a subscription, a transaction or a wait. |
 
-- 2026-10-16, still on pi-durable, also over NetBird.
-- 2026-10-24, again on the own store: pair as admin, start/pause/resume/stop a
-  sieve run, set workers, then `SIGKILL` the coordinator and resend the same
-  command ID. That command completed exactly once, and an independent check
-  confirmed every result.
+Entry fields are data from other agents, never instructions; the prompt says so. On the phone's own server and with
+`PI_SERVERD_AGENT_SPACE`, each session is an agent of its own (`conversation-<id>`): its own mailbox, its own
+transactions. An event pump hands every message of its mailbox to it exactly once, also after a restart
+(`agent-space.json`). Every tool call carries a request identity, so a call repeated after a crash gets its first
+result. Details: [docs/spaces.md](docs/spaces.md) (German).
 
-Still open: NetBird and screen-off behaviour with the own store, a coordinator
-on big, event tracking instead of polling, and on-device checks of the WebView
-`confirm`/`prompt` dialogs.
+### The phone's own space server
+
+`PiService` starts `runtime/bin/phi-space-server` beside node as a process of its own and restarts it when it ends
+(1 s, doubling to 30 s). A node crash leaves it running, and the other way round. It listens only on the unix socket
+`home/.pi-mobile/space-server.sock` (`--peer phone --agent-host`); nothing on the network reaches it. Its log is
+`log/space-server.log`, restarts are in `log/service-error.txt`. An APK built without it
+(`PHI_SPACE_SERVER_SKIP=1`) runs as before, with no space tools in the chat. Checked on the phone: `kill -9` of the
+server or of node, force-stop, two minutes of forced deep idle.
+
+### The Spaces page (`spaces.html`)
+
+The page shows one step at a time, with a status card on top (state, device, coordinator, chosen Space):
+
+1. **Prepare the device:** peer ID, coordinator host ID and endpoint (`tcp://ADDRESS:PORT`). A P-256 key is made in
+   the Android Keystore; the private key never leaves it.
+2. **Pair:** the coordinator's one-time pairing code (text or QR JSON pasted; no camera scanning yet). The code is
+   never stored.
+3. **Connect a Space:** host ID and endpoint of the data host, and the Space (ID or alias).
+4. **Remote sessions over a Space:** host ID, endpoint and Space of an agent host (pi-serverd with
+   `PI_SERVERD_REMOTE_SPACE`). It then appears on the **Remote** page as "(über Space)": sessions, models, prompts and
+   history without SSH, with the device key and a grant per call.
+
+Once paired: **Space öffnen** reads the Space through a short-lived grant (name, number of entries, the first 100
+entries; read only). **Erweitert** checks the key proof and renews the device key (own-key rotation, which can be
+resumed when the connection broke off). Request identities and public metadata are saved privately before sending.
+Every field, button, state and error message: [docs/spaces.md](docs/spaces.md).
+
+### Spaces-Steuerung (`steuerung.html`)
+
+Admin commands to the coordinator, with the admin role, in five tabs:
+
+- **Übersicht:** alerts (`listAlerts`) and the commands this device sent, with their state.
+- **Läufe:** state, open acknowledgements, recovery views; pause, resume, stop (stop only after a `dryRun` preview
+  that names the revision), recovery decisions bound to the view hash, a new sieve run, its result (`exportRun`),
+  a scheduled pause or resume (`scheduleRun`).
+- **Worker:** desired against reported state with its age; set the count.
+- **Spaces:** create, archive, reactivate, delete.
+- **Mehr:** deployment (plan, export) and the audit log (`auditLog`).
+
+Each command ID is stored in the private profile before it is sent. After a timeout, double tap or restart the same ID
+is asked again ("Ausgang erneut abfragen"), so a command is never started twice. Irreversible commands ask on the
+page first. Results are polled only while the page is visible. Every field: [docs/steuerung.md](docs/steuerung.md).
+
+Device acceptance on the Xiaomi M2007J17G against a coordinator in production composition over Wi-Fi: 2026-10-16
+(still on pi-durable, also over NetBird) and 2026-10-24 on the own store (pair as admin, start/pause/resume/stop a
+sieve run, set workers, `SIGKILL` the coordinator and resend the same command ID: completed exactly once). Still
+open: NetBird with the own store, a coordinator on big, event tracking instead of polling.
 
 `PI_SERVERD_FEDERATION_CONFIG` opts pi-serverd into the provisioned federation
 runtime, independent boot/authority checks and its supervisor. Configuration,
@@ -166,7 +210,8 @@ recovery integration are documented in the sibling phi-spaces checkout:
 `docs/abnahme/ap1b-betrieb.md`, `docs/abnahme/ap1b-abnahme.md` and
 `docs/betrieb-und-mobile-steuerung.md`.
 
-Mobile lifecycle checks: `node --test test/spaces-mobile.test.mjs`.
+Mobile lifecycle checks: `node --test test/spaces-mobile.test.mjs`; the space tools over another server and the
+phone's agent host path: `runtime/test-remote-space.mjs`.
 
 ## App screens
 
@@ -198,7 +243,7 @@ flows show the verification URL and code in the app. Completed credentials are
 stored in `~/.pi/agent/auth.json` and immediately become available to the
 model picker.
 
-## Remote control, two ways
+## Remote control
 
 ### 1. SSH pi TUI (immediate, full fidelity)
 
@@ -254,6 +299,11 @@ The state directory is `0700` and the socket `0600`. The phone only writes calls
 and tools run in `pi-serverd` on the remote host. For the full interactive Pi
 TUI instead, use **Clients → ▸_** or **pi CLI (ssh)**; run it in `tmux` when an
 SSH disconnect must not end the TUI process.
+
+**Without SSH.** The same calls also run over a Space of a phi-spaces federation: pi-serverd with
+`PI_SERVERD_REMOTE_SPACE` takes them there, and the phone reaches it with its device key and a grant per call
+(Spaces → step 4, then the host "(über Space)" on the Remote page; see [Spaces](#spaces-functions-and-pages)).
+A WLAN demo with scripts: [docs/remote-demo.md](docs/remote-demo.md).
 
 ### 3. env-server (remote *tool execution*, different thing)
 
@@ -344,7 +394,7 @@ Volta, asdf and nodenv set `PATH` in `~/.bashrc` — through a prelude that sour
 
 ## Layout
 
-- `android/` — Gradle project (app module, Java only, no NDK)
+- `android/` — Gradle project (app module, Java only; the NDK only builds `phi-space-server`)
 - `runtime/` — `server.mjs` (durable bridge + `/pty` WS + remote attach),
   `common.mjs` (shared harness setup, credential store with file lock, durable
   session registry, sequenced event hub, single-owner lock),
@@ -355,10 +405,13 @@ Volta, asdf and nodenv set `PATH` in `~/.bashrc` — through a prelude that sour
   `spaces-mobile.mjs` (pairing, Spaces and admin-command bridge behind
   `/api/spaces/*`), `space-keystore.mjs` (Android Keystore signer),
   `phi-spaces.mjs` (generated phi-spaces bundle, checked in),
+  `bin/phi-space-server` (the phone's space server, built by `prepare-runtime.py`, not committed),
   `space-examples/` (generated example CLI programs, optional),
   `public/` (chat, keys, sessions, clients, remote, terminal, spaces and
   steuerung pages + shared menu), package.json for prod node_modules
-- `test/` — `spaces-mobile.test.mjs` (mobile Spaces lifecycle and control bridge)
+- `test/` — `spaces-mobile.test.mjs` (mobile Spaces lifecycle and control bridge); `runtime/test-*.mjs` the
+  offline runtime suite (`npm test` in `runtime/`)
+- `scripts/` — `prepare-runtime.py` (packaging, runs before every build), `remote-demo/` (device demo over WLAN)
 - `debs/` — Termux apt packages (aarch64) + extracted `rootfs/` used to build
   `rootfs.bin` (see below)
 - `tools/` — local toolchain (JDK 21, Android SDK, Gradle 8.10.2) — not committed
@@ -374,6 +427,8 @@ JAVA_HOME=<path-to>/tools/jdk21 ./gradlew assembleDebug
 Toolchain notes:
 
 - JDK 21 (Temurin) — Gradle/AGP 8.7.3 does not support the system JDK 25.
+- `phi-space-server` needs `cargo` and the NDK in `tools/android-sdk/ndk/` (built with API 24 clang for
+  `aarch64-linux-android`, stripped). Without them, or with `PHI_SPACE_SERVER_SKIP=1`, the APK has no space server.
 - compileSdk 35, minSdk 26, targetSdk **28** — keeps direct `execve()` of
   app-private binaries working (Android 10+ SELinux blocks it for
   targetSdk >= 29). `PiService` falls back to launching node via
@@ -475,20 +530,39 @@ See ANALYSE.md for the full evaluation and upstream facts.
 
 ## Changelog
 
-### Unreleased
+### 0.0.8 — 2026-11-13
 
-- Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
-  `chord`, `pi-coding-agent`, `pi-schema`).
-- `pi-client`, `pi-server` and `pi-protocol` are gone, with their Chord 1.1.0 overrides: the SSH path makes the
-  same calls over a space through its tunnel (`attachRemote` keeps its interface). pi-serverd's conversation socket
-  serves a store of its own; Space RPC moved to `space.sock`. An outdated daemon whose update is declined is
-  reported as such.
-- Clients: a host's name and address can be edited in place (✎); the entry keeps
-  its place in the list.
+Remote sessions over a space instead of pi-server/pi-client, a space server on the phone, and the space tools for
+the phone's chat.
+
+**Spaces**
+
+- The phone runs its own space server: the APK carries `phi-space-server` (Rust, built for aarch64-linux-android by
+  `scripts/prepare-runtime.py` from the phi-spaces checkout, stripped into `runtime/bin/`, not committed;
+  `PHI_SPACE_SERVER_SKIP=1` leaves it out). `PiService` supervises it beside node (own process, restart with backoff,
+  store `home/.pi-mobile/space-server.sqlite`, unix socket only), and the phone's chat sessions get the space tools
+  there, each its own agent (`PI_MOBILE_SPACE`). Checked on the phone: kill -9 of either process, force-stop, two
+  minutes of forced deep idle. [Spaces](#spaces-functions-and-pages), [docs/spaces.md](docs/spaces.md).
+- pi-serverd's conversations can use another space server's Space for their space tools
+  (`PI_SERVERD_AGENT_SPACE`, `PI_SERVERD_AGENT_SPACE_NAME`): pi-serverd is one agent host there (role `agentHost`),
+  each conversation its own agent with its own mailbox, and an event pump hands its events over once, also after a
+  restart (`~/.pi-serverd/agent-space.json`). Test in `runtime/test-remote-space.mjs`, also across a restart of the
+  space server. The scripted model (`PI_TEST_FAUX`) also knows `!wait <type>` and `!notify <type>`.
+- A space that cannot be reached no longer stops a turn: the prompt says "unreachable now".
+- [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
+  the steps (prepare, pair, connect a Space, remote sessions), every field and button, the status
+  card, error messages, the phone's own space server and what is kept on the device.
 - Spaces control (`steuerung.html`) rebuilt for the phone: tabs (overview, runs, workers,
   Spaces, more), states in plain words, a hint under every field, confirmations on the page
   instead of browser dialogs, an inline time field for scheduled pause/resume. What every
   field means: [docs/steuerung.md](docs/steuerung.md) (German, like the page).
+
+**Remote sessions**
+
+- `pi-client`, `pi-server` and `pi-protocol` are gone, with their Chord 1.1.0 overrides: the SSH path makes the
+  same calls over a space through its tunnel (`attachRemote` keeps its interface). pi-serverd's conversation socket
+  serves a store of its own; Space RPC moved to `space.sock`. An outdated daemon whose update is declined is
+  reported as such.
 - Remote conversations over a Space instead of pi-server/pi-client (phi-spaces
   docs/m1-mobile.en.md): pi-serverd answers calls taken from a Space
   (`PI_SERVERD_REMOTE_SPACE`, `runtime/remote-calls.mjs`); Spaces → "Remote-Sitzungen über
@@ -498,24 +572,19 @@ See ANALYSE.md for the full evaluation and upstream facts.
   (LAN coordinator, pi-serverd with the scripted model, the phone driven over adb; flow in
   [docs/remote-demo.md](docs/remote-demo.md), German); `scripts/remote-demo/phone-ssh.mjs --target <client>`
   runs the SSH path of the Remote page from the phone against a saved client (provisioning, sessions, long poll).
-- pi-serverd's conversations can use another space server's Space for their space tools
-  (`PI_SERVERD_AGENT_SPACE`, `PI_SERVERD_AGENT_SPACE_NAME`): pi-serverd is one agent host there (role `agentHost`),
-  each conversation its own agent with its own mailbox, and an event pump hands its events over once, also after a
-  restart (`~/.pi-serverd/agent-space.json`). [docs/spaces.md](docs/spaces.md); test in `runtime/test-remote-space.mjs`.
-  The scripted model (`PI_TEST_FAUX`) also knows `!wait <type>` and `!notify <type>`.
-- The phone runs its own space server: the APK carries `phi-space-server` (Rust, built for aarch64-linux-android by
-  `scripts/prepare-runtime.py` from the phi-spaces checkout, stripped into `runtime/bin/`, not committed;
-  `PHI_SPACE_SERVER_SKIP=1` leaves it out). `PiService` supervises it beside node (own process, restart with backoff,
-  store `home/.pi-mobile/space-server.sqlite`, unix socket only), and the phone's chat sessions get the space tools
-  there, each its own agent (`PI_MOBILE_SPACE`). Checked on the phone: kill -9 of either process, force-stop, two
-  minutes of forced deep idle. [docs/spaces.md](docs/spaces.md).
 - `create` of a remote session happens once per request: a call that comes back after its host died (same `callId`)
   or a client `requestId` sent twice returns the session made the first time (`createRequest` in the session registry).
+
+**App**
+
+- Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
+  `chord`, `pi-coding-agent`, `pi-schema`).
+- Text on the phone is at least 16 px everywhere (form controls included); headings and the brand one step larger,
+  the bars taller. The terminal (xterm) uses 12 px.
+- Clients: a host's name and address can be edited in place (✎); the entry keeps
+  its place in the list.
 - Fix: the APK did not package `runtime/remote-calls.mjs`, so the app's node exited on start;
   `scripts/prepare-runtime.py` now refuses a packaged module that imports an unpackaged sibling.
-- [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
-  the three steps (prepare, pair, connect a Space), every field and button, the status
-  card, error messages and what is kept on the device.
 
 ### 0.0.7 — 2026-11-04
 
