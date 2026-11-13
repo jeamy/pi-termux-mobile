@@ -120,7 +120,8 @@ and grants. Client request fields cannot override either identity.
   spaces and deployment through the paired control connection (see below).
 
 Every page is in English and German. The button at the right end of the header (`EN`/`DE`) shows the page's language
-and switches to the other one; the choice is kept on the device (`localStorage` `pi-lang`). Without a choice the
+and switches to the other one (on the pi CLI page it is an entry of the ≡ sheet, since a reload ends the running
+CLI); the choice is kept on the device (`localStorage` `pi-lang`). Without a choice the
 phone's system language decides (German for `de`, English otherwise). The texts are in `runtime/public/i18n.js` as
 English/German pairs; `runtime/test-i18n.mjs` fails when a page or script shows a text without both. The service
 notification and the start error page follow the system language.

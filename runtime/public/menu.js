@@ -45,7 +45,7 @@ export function renderMenu() {
     menuBtn.title = t('Navigation');
     menuBtn.textContent = '≡';
     menuBtn.style.marginLeft = 'auto';
-    bar.append(menuBtn, langBtn);
+    bar.appendChild(menuBtn);
 
     const overlay = document.createElement('div');
     overlay.id = 'nav-sheet-overlay';
@@ -80,6 +80,13 @@ export function renderMenu() {
       location.href = `/terminal.html?token=${encodeURIComponent(token)}&ssh=${encodeURIComponent(target)}`;
     });
     sheet.appendChild(sshA);
+    // the language switch reloads the page, which ends the pi CLI: here it sits in the sheet, not next to ≡
+    const langA = document.createElement('a');
+    langA.href = '#';
+    langA.innerHTML = `<span class="nav-icon">${lang === 'de' ? 'DE' : 'EN'}</span>`;
+    langA.append(t('Language: English (tap for Deutsch)'));
+    langA.addEventListener('click', (e) => { e.preventDefault(); setLang(lang === 'de' ? 'en' : 'de'); });
+    sheet.appendChild(langA);
     const close = document.createElement('span');
     close.id = 'nav-sheet-close';
     close.textContent = `✕  ${t('close')}`;
