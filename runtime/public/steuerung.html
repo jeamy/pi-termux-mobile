@@ -14,20 +14,20 @@
 
 <!-- ── Übersicht ─────────────────────────────────────────────────────────── -->
 <section data-panel="overview" hidden>
-  <p class="sp-hint ctl-intro">Diese Seite schickt Aufträge an den <b>Koordinator</b>, mit dem das Gerät unter „Spaces“ gekoppelt ist. Ein Auftrag gilt erst als erledigt, wenn der Koordinator sein Ergebnis meldet. Jeder Auftrag hat eine <b>Auftrags-ID</b>; geht die Verbindung verloren, wird mit derselben ID nachgefragt statt neu gestartet.</p>
+  <p class="sp-hint ctl-intro" data-i18n-html>Diese Seite schickt Aufträge an den <b>Koordinator</b>, mit dem das Gerät unter „Spaces“ gekoppelt ist. Ein Auftrag gilt erst als erledigt, wenn der Koordinator sein Ergebnis meldet. Jeder Auftrag hat eine <b>Auftrags-ID</b>; geht die Verbindung verloren, wird mit derselben ID nachgefragt statt neu gestartet.</p>
 
   <div class="section-hdr">Hinweise <button type="button" data-load="alerts">↻</button></div>
   <p class="sp-hint ctl-pad">Warnungen des Koordinators, etwa Hosts ohne Lebenszeichen oder hängende Läufe.</p>
   <div id="alerts"></div>
 
   <div class="section-hdr">Vorgänge <button type="button" data-load="operations">↻</button></div>
-  <p class="sp-hint ctl-pad">Die Aufträge, die <b>dieses Gerät</b> gesendet hat, mit ihrem Stand. Ein offener Vorgang kann mit derselben ID erneut abgefragt werden.</p>
+  <p class="sp-hint ctl-pad" data-i18n-html>Die Aufträge, die <b>dieses Gerät</b> gesendet hat, mit ihrem Stand. Ein offener Vorgang kann mit derselben ID erneut abgefragt werden.</p>
   <div id="operations"></div>
 </section>
 
 <!-- ── Läufe ─────────────────────────────────────────────────────────────── -->
 <section data-panel="runs" hidden>
-  <p class="sp-hint ctl-intro">Ein <b>Lauf</b> ist eine verteilte Rechenaufgabe, hier das Primzahlsieb. Seine Tasks liegen in den Spaces seiner <b>Members</b>; Worker holen sie dort ab. Pausieren, Fortsetzen und Stoppen wirken auf alle Members gemeinsam und gelten erst, wenn jeder Member bestätigt hat.</p>
+  <p class="sp-hint ctl-intro" data-i18n-html>Ein <b>Lauf</b> ist eine verteilte Rechenaufgabe, hier das Primzahlsieb. Seine Tasks liegen in den Spaces seiner <b>Members</b>; Worker holen sie dort ab. Pausieren, Fortsetzen und Stoppen wirken auf alle Members gemeinsam und gelten erst, wenn jeder Member bestätigt hat.</p>
 
   <div class="section-hdr">Läufe <button type="button" data-load="runs">↻</button></div>
   <div id="runs"></div>
@@ -36,7 +36,7 @@
     <summary>＋ Neuen Primzahlsieb-Lauf starten</summary>
     <form id="sieve" class="sp-form">
       <label>Lauf-ID<input name="runId" required pattern="[a-zA-Z0-9][a-zA-Z0-9._:\-]{0,95}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <p class="sp-hint">Name des Laufs, frei wählbar und eindeutig. Er beginnt mit einem Buchstaben oder einer Ziffer, danach sind auch <code>. _ : -</code> erlaubt, höchstens 96 Zeichen. Derselbe Name startet keinen zweiten Lauf.</p>
+      <p class="sp-hint" data-i18n-html>Name des Laufs, frei wählbar und eindeutig. Er beginnt mit einem Buchstaben oder einer Ziffer, danach sind auch <code>. _ : -</code> erlaubt, höchstens 96 Zeichen. Derselbe Name startet keinen zweiten Lauf.</p>
       <div class="ctl-two">
         <label>Von<input name="start" type="number" min="0" value="1" required inputmode="numeric"></label>
         <label>Bis (ohne)<input name="end" type="number" min="2" value="1001" required inputmode="numeric"></label>
@@ -54,7 +54,7 @@
 
 <!-- ── Worker ────────────────────────────────────────────────────────────── -->
 <section data-panel="workers" hidden>
-  <p class="sp-hint ctl-intro">Ein <b>Worker</b> ist ein Prozess auf einem Host, der Tasks aus einem Space holt und abarbeitet. Eine <b>Zuweisung</b> legt fest, wie viele Worker welcher Art auf welchem Host für welchen Space laufen sollen. Der Host meldet zurück, wie viele tatsächlich laufen.</p>
+  <p class="sp-hint ctl-intro" data-i18n-html>Ein <b>Worker</b> ist ein Prozess auf einem Host, der Tasks aus einem Space holt und abarbeitet. Eine <b>Zuweisung</b> legt fest, wie viele Worker welcher Art auf welchem Host für welchen Space laufen sollen. Der Host meldet zurück, wie viele tatsächlich laufen.</p>
 
   <div class="section-hdr">Zuweisungen <button type="button" data-load="workers">↻</button></div>
   <div id="workers"></div>
@@ -67,13 +67,13 @@
       <label>Host-ID<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <p class="sp-hint">Der Host, auf dem die Worker laufen sollen, mit seiner ID in der Föderation.</p>
       <label>Workerart<input name="kind" value="sieve" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <p class="sp-hint">Welches Programm der Worker ausführt. Für das Primzahlsieb ist das <code>sieve</code>. Der Host muss diese Art kennen, sonst lehnt er ab.</p>
+      <p class="sp-hint" data-i18n-html>Welches Programm der Worker ausführt. Für das Primzahlsieb ist das <code>sieve</code>. Der Host muss diese Art kennen, sonst lehnt er ab.</p>
       <label>Ziel-Space-ID<input name="targetSpace" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <p class="sp-hint">Der Space, aus dem die Worker ihre Tasks holen, meist ein Member des Laufs.</p>
       <label>Lauf-ID (optional)<input name="runId" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <p class="sp-hint">Bindet die Worker an einen Lauf: Sie nehmen nur dessen Tasks und halten an, wenn er pausiert.</p>
       <label>Anzahl<input name="count" type="number" min="0" max="64" value="1" required inputmode="numeric"></label>
-      <p class="sp-hint">Wie viele Worker laufen sollen (0 bis 64). <b>0</b> beendet alle, jeden nach seinem laufenden Task; nichts wird mitten in der Arbeit abgebrochen.</p>
+      <p class="sp-hint" data-i18n-html>Wie viele Worker laufen sollen (0 bis 64). <b>0</b> beendet alle, jeden nach seinem laufenden Task; nichts wird mitten in der Arbeit abgebrochen.</p>
       <div class="ctl-confirm" id="workers-confirm" hidden></div>
       <button type="submit" class="btn-primary sp-wide">Anzahl setzen</button>
     </form>
@@ -82,14 +82,14 @@
 
 <!-- ── Spaces ────────────────────────────────────────────────────────────── -->
 <section data-panel="spaces" hidden>
-  <p class="sp-hint ctl-intro">Benannte Spaces auf den Hosts der Föderation anlegen und außer Betrieb nehmen. Der Lebenslauf eines Spaces: <b>aktiv → archiviert → gelöscht</b>. Ein archivierter Space nimmt keine neuen Einträge an und kann reaktiviert werden.</p>
+  <p class="sp-hint ctl-intro" data-i18n-html>Benannte Spaces auf den Hosts der Föderation anlegen und außer Betrieb nehmen. Der Lebenslauf eines Spaces: <b>aktiv → archiviert → gelöscht</b>. Ein archivierter Space nimmt keine neuen Einträge an und kann reaktiviert werden.</p>
 
   <div class="section-hdr">Space anlegen</div>
   <form id="space-create" class="card sp-form">
     <label>Host-ID<input name="hostId" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <p class="sp-hint">Der Host, auf dem der Space liegen soll.</p>
     <label>Alias<input name="alias" required pattern="[a-z0-9][a-z0-9._\-]{0,63}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-    <p class="sp-hint">Lesbarer Name, nur Kleinbuchstaben, Ziffern und <code>. _ -</code>, höchstens 64 Zeichen. Gibt es den Alias auf dem Host schon, wird der vorhandene Space zurückgegeben statt eines zweiten.</p>
+    <p class="sp-hint" data-i18n-html>Lesbarer Name, nur Kleinbuchstaben, Ziffern und <code>. _ -</code>, höchstens 64 Zeichen. Gibt es den Alias auf dem Host schon, wird der vorhandene Space zurückgegeben statt eines zweiten.</p>
     <button type="submit" class="btn-primary sp-wide">Space anlegen</button>
   </form>
 
@@ -103,7 +103,7 @@
       <button type="submit" value="reactivateSpace">Reaktivieren</button>
       <button type="submit" value="deleteSpace" class="ctl-danger">Löschen</button>
     </div>
-    <p class="sp-hint"><b>Löschen</b> gelingt nur bei einem archivierten, leeren Space, der zu keinem Lauf gehört. Seine ID bleibt danach reserviert.</p>
+    <p class="sp-hint" data-i18n-html><b>Löschen</b> gelingt nur bei einem archivierten, leeren Space, der zu keinem Lauf gehört. Seine ID bleibt danach reserviert.</p>
     <div class="ctl-confirm" id="space-confirm" hidden></div>
   </form>
 </section>
@@ -112,12 +112,12 @@
 <section data-panel="more" hidden>
   <div class="section-hdr">Deployment</div>
   <form id="deployment" class="card sp-form">
-    <p class="sp-hint">Eine Deployment-Config beschreibt Hosts, Spaces und Worker einer Föderation als JSON (siehe <code>npm run bootstrap</code> in phi-spaces). Keine Geheimnisse einfügen: Schlüssel und Tokens gehören nicht hinein.</p>
+    <p class="sp-hint" data-i18n-html>Eine Deployment-Config beschreibt Hosts, Spaces und Worker einer Föderation als JSON (siehe <code>npm run bootstrap</code> in phi-spaces). Keine Geheimnisse einfügen: Schlüssel und Tokens gehören nicht hinein.</p>
     <label>Deployment-Config (JSON)<textarea name="config" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
     <button type="submit" value="planDeployment" class="btn-primary sp-wide">Plan anzeigen</button>
     <p class="sp-hint">Zeigt, welche Schritte nötig wären und ob etwas blockiert. Es wird nichts geändert.</p>
     <button type="submit" value="exportDeployment" class="sp-wide">Angewendeten Stand exportieren</button>
-    <p class="sp-hint">Holt den Stand, den der Koordinator für dieses Deployment zuletzt angewendet hat. Aus der Config wird nur das Feld <code>deployment</code> gelesen.</p>
+    <p class="sp-hint" data-i18n-html>Holt den Stand, den der Koordinator für dieses Deployment zuletzt angewendet hat. Aus der Config wird nur das Feld <code>deployment</code> gelesen.</p>
   </form>
   <div id="deployment-result"></div>
 

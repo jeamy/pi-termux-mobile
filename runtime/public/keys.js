@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { API } from './constants.js';
 import { renderMenu } from './menu.js';
 
@@ -15,8 +16,8 @@ function askOAuthPrompt(prompt) {
   const input = document.getElementById('oauth-dialog-input');
   const submit = document.getElementById('oauth-dialog-submit');
   const cancel = document.getElementById('oauth-dialog-cancel');
-  title.textContent = prompt.type === 'select' ? 'Choose sign-in method' : 'Sign in';
-  message.textContent = prompt.message || 'Enter the requested value.';
+  title.textContent = prompt.type === 'select' ? t('Choose sign-in method') : t('Sign in');
+  message.textContent = prompt.message || t('Enter the requested value.');
   select.innerHTML = '';
   const choices = prompt.options ?? [];
   select.classList.toggle('hidden', !choices.length);
@@ -47,7 +48,7 @@ async function load() {
   const j = await r.json().catch(() => ({ providers: [] }));
   list.innerHTML = '';
   if (!j.providers?.length) {
-    list.innerHTML = '<div class="key-empty">no credentials saved</div>';
+    list.replaceChildren(Object.assign(document.createElement('div'), { className: 'key-empty', textContent: t('no credentials saved') }));
     return;
   }
   for (const p of j.providers) {
@@ -62,12 +63,13 @@ async function load() {
     const del = document.createElement('button');
     del.textContent = '✕';
     del.className = 'key-del';
+    del.title = t('remove');
     del.addEventListener('click', async () => {
       const r2 = await fetch(API.auth, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-token': token },
         body: JSON.stringify({ provider: p.provider, delete: true }),
       });
-      msg.textContent = r2.ok ? `${p.provider} removed` : 'error';
+      msg.textContent = r2.ok ? t('{p} removed', { p: p.provider }) : t('error');
       load();
     });
     row.append(name, hint, del);
@@ -86,15 +88,15 @@ async function loadOAuthProviders() {
     oauthProvider.append(option);
   }
   document.getElementById('oauth-login').disabled = !oauthProvider.options.length;
-  if (!oauthProvider.options.length) oauthStatus.textContent = 'no OAuth providers available';
+  if (!oauthProvider.options.length) oauthStatus.textContent = t('no OAuth providers available');
 }
 
 async function runOAuth(provider) {
-  oauthStatus.textContent = 'starting sign-in…';
+  oauthStatus.textContent = t('starting sign-in…');
   const started = await fetch(API.oauthStart, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-token': token }, body: JSON.stringify({ provider }),
   }).then((r) => r.json()).catch(() => ({}));
-  if (!started.id) { oauthStatus.textContent = `error: ${started.error || 'could not start sign-in'}`; return; }
+  if (!started.id) { oauthStatus.textContent = t('error: {e}', { e: started.error || t('could not start sign-in') }); return; }
   let answeredPrompt = null;
   const timer = setInterval(async () => {
     const state = await fetch(`${API.oauthStatus}?token=${encodeURIComponent(token)}&id=${encodeURIComponent(started.id)}`)
@@ -104,12 +106,12 @@ async function runOAuth(provider) {
         oauthStatus.innerHTML = '';
         const link = document.createElement('a');
         link.href = event.url;
-        link.textContent = event.instructions || 'open sign-in page';
+        link.textContent = event.instructions || t('open sign-in page');
         oauthStatus.append(link);
         // MainActivity routes non-local URLs to Android's browser.
         window.location.assign(event.url);
       } else if (event.type === 'device_code') {
-        oauthStatus.textContent = `Open ${event.verificationUri} and enter code: ${event.userCode}`;
+        oauthStatus.textContent = t('Open {uri} and enter code: {code}', { uri: event.verificationUri, code: event.userCode });
       } else if (event.message) oauthStatus.textContent = event.message;
     }
     if (state.prompt && state.prompt.id !== answeredPrompt) {
@@ -122,7 +124,7 @@ async function runOAuth(provider) {
     }
     if (state.done) {
       clearInterval(timer);
-      oauthStatus.textContent = state.error ? `error: ${state.error}` : `signed in: ${provider}`;
+      oauthStatus.textContent = state.error ? t('error: {e}', { e: state.error }) : t('signed in: {p}', { p: provider });
       if (!state.error) { load(); loadOAuthProviders(); }
     }
   }, 600);
@@ -138,7 +140,7 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     body: JSON.stringify({ provider, key }),
   });
   const j = await r.json().catch(() => ({}));
-  msg.textContent = j.ok ? `saved ${provider}` : `error: ${j.error || r.status}`;
+  msg.textContent = j.ok ? t('saved {p}', { p: provider }) : t('error: {e}', { e: j.error || r.status });
   if (j.ok) { document.getElementById('add-key').value = ''; load(); }
 });
 
@@ -156,7 +158,7 @@ const btnUpdate   = document.getElementById('update-btn');
 const elLog       = document.getElementById('update-log');
 
 async function checkVersion() {
-  elInstalled.textContent = 'checking…';
+  elInstalled.textContent = t('checking…');
   try {
     const v = await fetch(`${API.piVersion}?token=${encodeURIComponent(token)}`).then(r => r.json());
     elInstalled.textContent = v.installed ?? '?';
@@ -172,7 +174,7 @@ async function checkVersion() {
       btnUpdate.classList.add('hidden');
       elOk.classList.remove('hidden');
     }
-  } catch { elInstalled.textContent = 'unavailable'; }
+  } catch { elInstalled.textContent = t('unavailable'); }
 }
 
 let pollTimer = null;
@@ -186,22 +188,22 @@ function startPolling() {
       clearInterval(pollTimer); pollTimer = null;
       elLog.classList.remove('hidden');
       if (s.ok) {
-        elInstalled.textContent = s.version ?? 'updated';
-        elLog.textContent += '\nrestarting…';
+        elInstalled.textContent = s.version ?? t('updated');
+        elLog.textContent += `\n${t('restarting…')}`;
         elArrow.classList.add('hidden'); elLatest.classList.add('hidden');
         btnUpdate.classList.add('hidden'); elOk.classList.remove('hidden');
         setTimeout(() => location.reload(), 3000);
       } else {
         if (s.error) elLog.textContent += `\n✕ ${s.error}`;
         elLog.scrollTop = elLog.scrollHeight;
-        btnUpdate.textContent = 'Retry'; btnUpdate.disabled = false;
+        btnUpdate.textContent = t('Retry'); btnUpdate.disabled = false;
       }
     }
   }, 1000);
 }
 
 btnUpdate?.addEventListener('click', async () => {
-  btnUpdate.textContent = 'updating…'; btnUpdate.disabled = true;
+  btnUpdate.textContent = t('updating…'); btnUpdate.disabled = true;
   elLog.textContent = ''; elLog.classList.remove('hidden');
   await fetch(API.piUpdate, { method: 'POST', headers: { 'x-token': token } });
   startPolling();
@@ -211,5 +213,5 @@ btnUpdate?.addEventListener('click', async () => {
 (async () => {
   await checkVersion();
   const s = await fetch(`${API.piUpdateStatus}?token=${encodeURIComponent(token)}`).then(r => r.json()).catch(() => null);
-  if (s?.running) { elLog.classList.remove('hidden'); btnUpdate.textContent = 'updating…'; btnUpdate.disabled = true; startPolling(); }
+  if (s?.running) { elLog.classList.remove('hidden'); btnUpdate.textContent = t('updating…'); btnUpdate.disabled = true; startPolling(); }
 })();

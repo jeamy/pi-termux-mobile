@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { API } from './constants.js';
 import { renderMenu } from './menu.js';
 import { newRequestId, postJson, Transcript, usageText } from './transcript.js';
@@ -23,7 +24,7 @@ let currentModel = null;
 
 function status(t) { statusEl.textContent = t; }
 function showBusy() {
-  status(busy ? `running…${queued ? ` (${queued} queued)` : ''}` : 'idle');
+  status(busy ? `${t('running…')}${queued ? ` ${t('({n} queued)', { n: queued })}` : ''}` : t('idle'));
   steerWrap.classList.toggle('hidden', !busy);
 }
 
@@ -46,12 +47,12 @@ function connect() {
       if (sessionLink) sessionLink.href = `sessions.html?token=${encodeURIComponent(token)}`;
       transcript.renderSnapshot(ev.snapshot);
     } else if (ev.type === 'bridge_error') {
-      transcript.sys(`error: ${ev.error}`);
+      transcript.sys(t('error: {e}', { e: ev.error }));
     } else if (ev.type !== 'bridge_connected') {
       transcript.handleEvent(ev);
     }
   };
-  es.onerror = () => status('reconnecting…');
+  es.onerror = () => status(t('reconnecting…'));
 }
 
 // --- composer: requestId makes a retried prompt exactly-once ------------------
@@ -89,7 +90,8 @@ async function refreshModels() {
   try {
     const r = await fetch(`${API.models}?token=${encodeURIComponent(token)}`);
     const j = await r.json();
-    modelSelect.innerHTML = '<option value="">no model</option>';
+    modelSelect.innerHTML = '';
+    modelSelect.append(new Option(t('no model'), ''));
     for (const m of j.models ?? []) {
       const o = document.createElement('option');
       o.value = `${m.provider}|${m.modelId}`;
@@ -104,7 +106,7 @@ modelSelect.addEventListener('change', async () => {
   const [provider, modelId] = modelSelect.value.split('|');
   if (!modelId) return;
   const r = await postJson(API.model, token, { provider, modelId });
-  if (!r.ok) transcript.sys(`error: ${r.error}`);
+  if (!r.ok) transcript.sys(t('error: {e}', { e: r.error }));
 });
 
 // ── Header action buttons ────────────────────────────────────────────────
@@ -112,14 +114,14 @@ const post1 = (url) => fetch(url, { method: 'POST', headers: { 'x-token': token 
 if (btnAbort)   btnAbort.addEventListener('click',   () => post1(API.abort));
 if (btnCompact) btnCompact.addEventListener('click', async () => {
   const r = await postJson(API.compact, token, {});
-  if (!r.ok && r.error) transcript.sys(`error: ${r.error}`);
+  if (!r.ok && r.error) transcript.sys(t('error: {e}', { e: r.error }));
 });
 if (btnNew) btnNew.addEventListener('click', async () => {
-  const name = prompt('Session name (optional):') ?? null;
+  const name = prompt(t('Session name (optional):')) ?? null;
   if (name === null) return;
   const r = await postJson(API.sessionNew, token, { name });
   if (r.ok) location.href = `/?token=${encodeURIComponent(token)}`;
-  else transcript.sys(`error: ${r.error}`);
+  else transcript.sys(t('error: {e}', { e: r.error }));
 });
 
 connect();

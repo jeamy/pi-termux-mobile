@@ -48,7 +48,7 @@ header {
   font-size: 19px; font-weight: 700; flex-shrink: 0;
 }
 .brand-pi { color: var(--primary); font-size: 23px; }
-#status { font-size: 16px; color: var(--muted); }
+#status { font-size: 16px; color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Bottom navigation ───────────────────────────────────────────────────── */
 #bottom-nav {
@@ -189,7 +189,7 @@ button:active { filter: brightness(.82); }
 #model-select {
   background: var(--surf2); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--rad-sm);
-  height: 36px; font-size: 16px; padding: 0 6px; max-width: 38vw;
+  height: 36px; font-size: 16px; padding: 0 6px; max-width: 38vw; min-width: 0; flex: 0 1 auto;
 }
 .hdr-actions { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
 .hdr-actions button { padding: 4px 9px; font-size: 16px; }
@@ -201,7 +201,7 @@ button:active { filter: brightness(.82); }
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 #connect-bar select {
-  flex: 1; height: 40px;
+  flex: 1; min-width: 0; height: 40px;
   background: var(--surf3); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--rad);
   padding: 0 10px; font-size: 16px;
@@ -397,3 +397,6 @@ dialog select, dialog input {
 .sp-msg.sp-busy::before, .sp-busy-btn::before { content: ''; flex-shrink: 0; width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: sp-spin .8s linear infinite; }
 .sp-busy-btn { display: flex !important; align-items: center; justify-content: center; gap: 10px; background: var(--prim-dk) !important; color: #fff !important; opacity: 1 !important; }
 @keyframes sp-spin { to { transform: rotate(360deg); } }
+/* language switch: right end of the header */
+#btn-lang { flex-shrink: 0; margin-left: auto; padding: 4px 8px; font-size: 16px; font-weight: 600; background: transparent; border: 1px solid var(--border); border-radius: var(--rad-sm); color: var(--muted); }
+.hdr-actions ~ #btn-lang, #btn-menu ~ #btn-lang { margin-left: 0; }

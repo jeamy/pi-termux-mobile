@@ -88,11 +88,14 @@ public final class MainActivity extends Activity {
                 Thread.sleep(500);
             } catch (Exception ignored) {}
         }
-        runOnUiThread(() -> webView.loadData(
+        boolean de = java.util.Locale.getDefault().getLanguage().equals("de");
+        runOnUiThread(() -> webView.loadDataWithBaseURL(null,
                 "<body style='background:#101014;color:#e4e4e8;font-family:sans-serif'>"
-                        + "<h3>runtime failed to start</h3>"
-                        + "<p>Check that the device allows the process; see README.</p></body>",
-                "text/html", "utf-8"));
+                        + (de ? "<h3>Die Laufzeit ist nicht gestartet</h3>"
+                              + "<p>Prüfen, ob das Gerät den Prozess zulässt; siehe README.</p></body>"
+                            : "<h3>runtime failed to start</h3>"
+                              + "<p>Check that the device allows the process; see README.</p></body>"),
+                "text/html", "utf-8", null));
     }
 
     private static String readAll(File f) throws Exception {

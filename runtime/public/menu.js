@@ -1,8 +1,9 @@
-import { API } from './constants.js';
+import { applyI18n, lang, setLang, t } from './i18n.js';
 
 // Shared header setup and bottom navigation for every page.
 // renderMenu() is called once per page and returns the session token.
 export function renderMenu() {
+  applyI18n();
   const token = new URLSearchParams(location.search).get('token')
     || localStorage.getItem('pi-token') || '';
   if (token) localStorage.setItem('pi-token', token);
@@ -28,14 +29,23 @@ export function renderMenu() {
 
   const page = document.body.dataset.page;
 
+  // Language switch: shows the language the page is in, a tap changes to the other one
+  const langBtn = document.createElement('button');
+  langBtn.id = 'btn-lang';
+  langBtn.type = 'button';
+  langBtn.textContent = lang === 'de' ? 'DE' : 'EN';
+  langBtn.title = t('Language: English (tap for Deutsch)');
+  langBtn.setAttribute('aria-label', langBtn.title);
+  langBtn.addEventListener('click', () => setLang(lang === 'de' ? 'en' : 'de'));
+
   // ── Terminal page: hamburger → slide-up nav sheet ─────────────────────────
   if (page === 'term') {
     const menuBtn = document.createElement('button');
     menuBtn.id = 'btn-menu';
-    menuBtn.title = 'Navigation';
+    menuBtn.title = t('Navigation');
     menuBtn.textContent = '≡';
     menuBtn.style.marginLeft = 'auto';
-    bar.appendChild(menuBtn);
+    bar.append(menuBtn, langBtn);
 
     const overlay = document.createElement('div');
     overlay.id = 'nav-sheet-overlay';
@@ -45,11 +55,11 @@ export function renderMenu() {
     const tabs = [
       { href: '/',             icon: '💬', label: 'Chat' },
       { href: '/remote.html',  icon: '⌁',  label: 'Remote' },
-      { href: '/terminal.html',icon: '>_', label: 'pi CLI (local)' },
+      { href: '/terminal.html',icon: '>_', label: t('pi CLI (local)') },
       { href: '/clients.html', icon: '⊟',  label: 'Clients' },
       { href: '/spaces.html', icon: '▦', label: 'Spaces' },
-      { href: '/steuerung.html', icon: '⚙', label: 'Spaces-Steuerung' },
-      { href: '/keys.html',    icon: '⚿',  label: 'Accounts' },
+      { href: '/steuerung.html', icon: '⚙', label: t('Spaces control') },
+      { href: '/keys.html',    icon: '⚿',  label: t('Accounts') },
     ];
     for (const t of tabs) {
       const a = document.createElement('a');
@@ -60,11 +70,11 @@ export function renderMenu() {
     // SSH target option
     const sshA = document.createElement('a');
     sshA.href = '#';
-    sshA.innerHTML = '<span class="nav-icon">⌁</span>pi CLI (ssh)…';
+    sshA.innerHTML = `<span class="nav-icon">⌁</span>${t('pi CLI (ssh)…')}`;
     sshA.addEventListener('click', (e) => {
       e.preventDefault();
       overlay.classList.add('hidden');
-      const target = prompt('SSH target (user@host[:port]):', localStorage.getItem('pi-ssh-target') || '');
+      const target = prompt(t('SSH target (user@host[:port]):'), localStorage.getItem('pi-ssh-target') || '');
       if (!target) return;
       localStorage.setItem('pi-ssh-target', target);
       location.href = `/terminal.html?token=${encodeURIComponent(token)}&ssh=${encodeURIComponent(target)}`;
@@ -72,7 +82,7 @@ export function renderMenu() {
     sheet.appendChild(sshA);
     const close = document.createElement('span');
     close.id = 'nav-sheet-close';
-    close.textContent = '✕  close';
+    close.textContent = `✕  ${t('close')}`;
     sheet.appendChild(close);
     overlay.appendChild(sheet);
     document.body.appendChild(overlay);
@@ -102,7 +112,7 @@ export function renderMenu() {
     { key: 'term',    href: '/terminal.html',icon: '>_', label: 'CLI' },
     { key: 'clients', href: '/clients.html', icon: '⊟',  label: 'Clients' },
     { key: 'spaces', href: '/spaces.html', icon: '▦', label: 'Spaces' },
-    { key: 'keys',    href: '/keys.html',    icon: '⚿',  label: 'Keys' },
+    { key: 'keys',    href: '/keys.html',    icon: '⚿',  label: t('Keys') },
   ];
   for (const tab of tabs) {
     const a = document.createElement('a');
@@ -112,5 +122,6 @@ export function renderMenu() {
     nav.appendChild(a);
   }
   document.body.appendChild(nav);
+  bar.appendChild(langBtn);
   return token;
 }

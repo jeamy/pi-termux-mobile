@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 // One modal implementation for security decisions. Never interpolate remote text as HTML.
 function ask(message, yes, no, danger = false) {
   return new Promise((resolve) => {
@@ -24,14 +25,14 @@ function ask(message, yes, no, danger = false) {
   });
 }
 export const askTrustHost = (target, fingerprint) => ask(
-  `Verify the SSH host fingerprint for ${target} OUTSIDE this app before continuing: ${fingerprint}. A fake host could steal all API keys and OAuth tokens from this phone. Do you trust this fingerprint?`,
-  'Fingerprint verified', 'Cancel', true);
+  t('Verify the SSH host fingerprint for {target} OUTSIDE this app before continuing: {fp}. A fake host could steal all API keys and OAuth tokens from this phone. Do you trust this fingerprint?', { target, fp: fingerprint }),
+  t('Fingerprint verified'), t('Cancel'), true);
 export const askCopyAuth = (target) => ask(
-  `WARNING: ${target} has no auth.json. Copy ALL API keys and OAuth tokens stored on this phone to the host? Anyone with access to that host could use them.`,
-  'Yes, copy', 'No', true);
+  t('WARNING: {target} has no auth.json. Copy ALL API keys and OAuth tokens stored on this phone to the host? Anyone with access to that host could use them.', { target }),
+  t('Yes, copy'), t('No'), true);
 export const askInstallKey = (target) => ask(
-  `${target} does not accept this device's SSH key. Install it with ssh-copy-id? You will be asked for the host password once.`,
-  'Yes, install key', 'No');
+  t('{target} does not accept this device\'s SSH key. Install it with ssh-copy-id? You will be asked for the host password once.', { target }),
+  t('Yes, install key'), t('No'));
 export const askUpdate = (target, info) => ask(
-  `pi-serverd on ${target} is outdated (${info.installed || 'unknown'} → ${info.available}). Update it now? Running work is interrupted; durable sessions resume afterwards.`,
-  'Yes, update', 'No, keep old version');
+  t('pi-serverd on {target} is outdated ({installed} → {available}). Update it now? Running work is interrupted; durable sessions resume afterwards.', { target, installed: info.installed || t('unknown'), available: info.available }),
+  t('Yes, update'), t('No, keep old version'));

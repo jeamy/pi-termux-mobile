@@ -1,3 +1,4 @@
+import { t as tr } from './i18n.js';
 // transcript.js — renders a pi-durable conversation from its committed entries
 // and watchEvents() agent events. Shared by the local chat and the Remote page.
 // Entries are deduplicated by id, so a snapshot followed by overlapping events
@@ -48,7 +49,7 @@ export class Transcript {
     this.pending = this.pending.filter((p) => p.el !== el);
     el.classList.remove('pending');
     el.classList.add('failed');
-    this.sys(`error: ${error}`);
+    this.sys(tr('error: {e}', { e: error }));
   }
 
   #renderEntry(entry) {
@@ -56,8 +57,8 @@ export class Transcript {
       if (this.seen.has(entry.id)) return;
       this.seen.add(entry.id);
     }
-    if (entry?.kind === 'pi.reset') { this.sys('— context reset —'); return; }
-    if (entry?.kind === 'pi.compaction') { this.sys('— earlier messages compacted —'); return; }
+    if (entry?.kind === 'pi.reset') { this.sys(tr('— context reset —')); return; }
+    if (entry?.kind === 'pi.compaction') { this.sys(tr('— earlier messages compacted —')); return; }
     for (const m of entry?.model ?? []) {
       if (m.role === 'user') {
         const text = messageText(m);
@@ -70,14 +71,14 @@ export class Transcript {
         for (const c of Array.isArray(m.content) ? m.content : []) {
           if (c?.type === 'toolCall') this.#toolStart(c.id, c.name, c.arguments);
         }
-        if (m.stopReason === 'aborted') this.sys('(interrupted)');
-        if (m.stopReason === 'error' && m.errorMessage) this.sys(`error: ${m.errorMessage}`);
+        if (m.stopReason === 'aborted') this.sys(tr('(interrupted)'));
+        if (m.stopReason === 'error' && m.errorMessage) this.sys(tr('error: {e}', { e: m.errorMessage }));
       } else if (m.role === 'toolResult') {
         const el = this.tools.get(m.toolCallId)?.el;
         const child = m.details?.conversationId;
         if (el && child !== undefined && !el.dataset.child) {
           el.dataset.child = String(child);
-          el.firstChild.textContent += `  → subagent #${child}`;
+          el.firstChild.textContent += `  ${tr('→ subagent #{n}', { n: child })}`;
         }
         if (el) el.classList.toggle('error', Boolean(m.isError));
         else this.#el(`msg tool${m.isError ? ' error' : ''}`, `⚙ ${m.toolName || 'tool'}`);
@@ -98,7 +99,7 @@ export class Transcript {
       this.#toolStart(t.callId, t.name);
       const slot = this.tools.get(t.callId);
       if (t.output) slot.out.textContent = t.output;
-      if (t.details?.conversationId !== undefined) slot.el.firstChild.textContent += `  → subagent #${t.details.conversationId}`;
+      if (t.details?.conversationId !== undefined) slot.el.firstChild.textContent += `  ${tr('→ subagent #{n}', { n: t.details.conversationId })}`;
     }
     if (snapshot?.agent) this.hooks.onModel?.(snapshot.agent.model ?? null);
     if (snapshot?.usage) this.hooks.onUsage?.(snapshot.usage);
@@ -160,7 +161,7 @@ export class Transcript {
         const child = ev.details?.conversationId;
         if (child !== undefined && !t.el.dataset.child) {
           t.el.dataset.child = String(child);
-          t.el.firstChild.textContent += `  → subagent #${child}`;
+          t.el.firstChild.textContent += `  ${tr('→ subagent #{n}', { n: child })}`;
         }
         break;
       }
@@ -174,13 +175,13 @@ export class Transcript {
       case 'agent_changed': this.hooks.onModel?.(ev.agent?.model ?? null); break;
       case 'usage_changed': this.hooks.onUsage?.(ev.usage); break;
       case 'inbox_update': this.hooks.onInbox?.(ev.items ?? []); break;
-      case 'compaction_start': this.sys('compacting…'); break;
-      case 'compaction_end': this.sys('compaction finished'); break;
-      case 'auto_retry_start': this.sys(`retry ${ev.attempt}: ${ev.errorMessage || ''}`); break;
-      case 'task_failed': this.sys(`error (${ev.kind}): ${ev.message}`); break;
+      case 'compaction_start': this.sys(tr('compacting…')); break;
+      case 'compaction_end': this.sys(tr('compaction finished')); break;
+      case 'auto_retry_start': this.sys(tr('retry {n}: {e}', { n: ev.attempt, e: ev.errorMessage || '' })); break;
+      case 'task_failed': this.sys(tr('error ({kind}): {e}', { kind: ev.kind, e: ev.message })); break;
       case 'submission': {
         const r = ev.record;
-        if (r?.status === 'unanswered') this.sys(`not answered: ${r.reason?.type || r.reason || 'failed'}`);
+        if (r?.status === 'unanswered') this.sys(tr('not answered: {r}', { r: r.reason?.type || r.reason || tr('failed') }));
         break;
       }
       default: break;

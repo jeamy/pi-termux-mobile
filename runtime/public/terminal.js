@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 /* global Terminal, FitAddon */
 import { askCopyAuth, askInstallKey, askTrustHost } from './authprompt.js';
 import { API } from './constants.js';
@@ -44,11 +45,11 @@ function connect(op = sshOp) {
     if (keyInstallRun) {
       keyInstallRun = false;
       if (keyInstallSucceeded) { keyInstallSucceeded = false; term.reset(); start(); return; }
-      term.write('\r\n[key installation failed — tap to retry]\r\n');
+      term.write(`\r\n${t('[key installation failed — tap to retry]')}\r\n`);
       return;
     }
-    term.write('\r\n\r\n[disconnected — tap to respawn]\r\n');
-    document.getElementById('status').textContent = 'disconnected';
+    term.write(`\r\n\r\n${t('[disconnected — tap to respawn]')}\r\n`);
+    document.getElementById('status').textContent = t('disconnected');
   };
 }
 // registered once: connect() runs again for respawn / key install
@@ -81,25 +82,25 @@ async function start() {
   if (sshTarget && !sshOp) {
     try {
       const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-token': token }, body: JSON.stringify(body) }).then((r) => r.json());
-      term.write(`checking ${sshTarget}…\r\n`);
+      term.write(`${t('checking {target}…', { target: sshTarget })}\r\n`);
       const st = await post(API.remoteAuthStatus, { target: sshTarget });
       if (st.loginFailed) {
         if (await askInstallKey(sshTarget)) { keyInstallRun = true; connect('copyid'); return; }
-        term.write('key not installed; ssh will ask for the password.\r\n');
-      } else if (st.error) term.write(`[auth check failed: ${st.error}]\r\n`);
+        term.write(`${t('key not installed; ssh will ask for the password.')}\r\n`);
+      } else if (st.error) term.write(`${t('[auth check failed: {e}]', { e: st.error })}\r\n`);
       else if (st.needsAuth) {
         let trusted = st.trusted;
         if (!trusted && await askTrustHost(sshTarget, st.fingerprint)) {
           const r = await post(API.remoteTrustHost, { target: sshTarget, fingerprint: st.fingerprint });
           trusted = r.ok;
-          if (!trusted) term.write(`[fingerprint confirmation failed: ${r.error}]\r\n`);
+          if (!trusted) term.write(`${t('[fingerprint confirmation failed: {e}]', { e: r.error })}\r\n`);
         }
         if (trusted && await askCopyAuth(sshTarget)) {
           const r = await post(API.remoteCopyAuth, { target: sshTarget });
-          term.write(r.ok ? 'auth.json copied.\r\n' : `[copy failed: ${r.error}]\r\n`);
+          term.write(`${r.ok ? t('auth.json copied.') : t('[copy failed: {e}]', { e: r.error })}\r\n`);
         }
       }
-    } catch (e) { term.write(`[auth check failed: ${e?.message || e}]\r\n`); }
+    } catch (e) { term.write(`${t('[auth check failed: {e}]', { e: e?.message || e })}\r\n`); }
   }
   connect();
 }

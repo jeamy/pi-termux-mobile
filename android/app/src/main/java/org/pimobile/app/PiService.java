@@ -343,14 +343,14 @@ public final class PiService extends Service {
         if (Build.VERSION.SDK_INT >= 26) {
             n = new Notification.Builder(this, CHANNEL)
                     .setContentTitle("pi mobile")
-                    .setContentText("agent runtime running")
+                    .setContentText(java.util.Locale.getDefault().getLanguage().equals("de") ? "Agent-Laufzeit läuft" : "agent runtime running")
                     .setSmallIcon(android.R.drawable.ic_media_play)
                     .setContentIntent(pi)
                     .build();
         } else {
             n = new Notification.Builder(this)
                     .setContentTitle("pi mobile")
-                    .setContentText("agent runtime running")
+                    .setContentText(java.util.Locale.getDefault().getLanguage().equals("de") ? "Agent-Laufzeit läuft" : "agent runtime running")
                     .setSmallIcon(android.R.drawable.ic_media_play)
                     .setContentIntent(pi)
                     .build();

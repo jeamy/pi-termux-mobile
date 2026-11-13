@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { API } from './constants.js';
 import { askCopyAuth, askInstallKey, askTrustHost, askUpdate } from './authprompt.js';
 import { renderMenu } from './menu.js';
@@ -49,7 +50,7 @@ let link = 'disconnected';
 function showStatus() {
   statusBar.classList.toggle('hidden', !attachedId);
   if (statusBand) statusBand.classList.toggle('hidden', !attachedId);
-  statusEl.textContent = link === 'reconnecting' ? 'reconnecting…' : busy ? 'running…' : 'idle';
+  statusEl.textContent = link === 'reconnecting' ? t('reconnecting…') : busy ? t('running…') : t('idle');
 }
 
 async function reloadHistory() {
@@ -101,7 +102,7 @@ async function loadHosts() {
   const sp = await post('/api/spaces/status', {}).catch(() => null), pr = sp?.profile;
   if (pr?.state === 'paired' && pr.remoteHostId && pr.remoteEndpoint) {
     const o = document.createElement('option');
-    o.value = VIA_SPACE; o.textContent = `${pr.remoteHostId} (über Space)`;
+    o.value = VIA_SPACE; o.textContent = t('{host} (over Space)', { host: pr.remoteHostId });
     hostSel.appendChild(o);
   }
   const j = await getJson(API.clients);
@@ -137,7 +138,7 @@ async function loadRemoteModels() {
 async function attachSession(id) {
   pollGeneration++;
   const r = await post(API.remoteAttach, { id }, { retries: 2 });
-  if (!r.ok) { transcript.sys(`error: ${r.error || 'could not attach'}`); return; }
+  if (!r.ok) { transcript.sys(t('error: {e}', { e: r.error || t('could not attach') })); return; }
   attachedId = id;
   link = 'connected';
   await loadRemoteModels();
@@ -168,7 +169,7 @@ let connectGeneration = 0;
 
 function setConnected(v) {
   connected = v;
-  btnConnect.textContent = v ? 'disconnect' : 'connect';
+  btnConnect.textContent = v ? t('disconnect') : t('connect');
 }
 
 function resetUi() {
@@ -187,7 +188,7 @@ async function disconnectHost() {
   connecting = false;
   resetUi();
   const r = await post(API.remoteDisconnect, {});
-  transcript.sys(r.error ? `error: ${r.error}` : 'disconnected');
+  transcript.sys(r.error ? t('error: {e}', { e: r.error }) : t('disconnected'));
 }
 
 async function connectHost() {
@@ -195,12 +196,12 @@ async function connectHost() {
   if (!target || connecting) return;
   connecting = true;
   const generation = ++connectGeneration;
-  btnConnect.textContent = 'cancel';
+  btnConnect.textContent = t('cancel');
   try {
     // A connection is owned by one host. Do not leave the old host's attached
     // session, model, transcript, or composer usable while switching hosts.
     resetUi();
-    transcript.sys(`connecting ${target}…`);
+    transcript.sys(t('connecting {target}…', { target: hostSel.selectedOptions[0]?.textContent || target }));
     // provisioning (install/start of pi-serverd) can take minutes: show its log
     let shown = 0;
     const logTimer = setInterval(async () => {
@@ -232,21 +233,21 @@ async function connectHost() {
       location.href = `/terminal.html?token=${encodeURIComponent(token)}&ssh=${encodeURIComponent(target)}&sshop=copyid&next=${encodeURIComponent(back)}`;
       return;
     }
-    if (!r.ok) { transcript.sys(`error: ${r.error}`); return; }
+    if (!r.ok) { transcript.sys(t('error: {e}', { e: r.error })); return; }
     setConnected(true);
-    transcript.sys(`connected: ${r.serverId}${r.hostKey ? ` · host key ${r.hostKey}` : ''}`);
+    transcript.sys(t('connected: {id}', { id: r.serverId }) + (r.hostKey ? t(' · host key {key}', { key: r.hostKey }) : ''));
     let sessions = r.sessions?.sessions ?? [];
     // A fresh host has no durable conversations yet. Create one immediately so
     // Remote always opens a session belonging to the newly selected host.
     if (!sessions.length) {
       const created = await post(API.remoteCreate, {});
-      if (!created.id) { transcript.sys(`error: ${created.error || 'could not create session'}`); return; }
+      if (!created.id) { transcript.sys(t('error: {e}', { e: created.error || t('could not create session') })); return; }
       sessions = [{ id: created.id }];
     }
     await showSessions(sessions, true);
-  } catch (e) { if (generation === connectGeneration) transcript.sys(`error: ${e?.message || e}`); }
+  } catch (e) { if (generation === connectGeneration) transcript.sys(t('error: {e}', { e: e?.message || e })); }
   finally {
-    if (generation === connectGeneration) { connecting = false; btnConnect.textContent = connected ? 'disconnect' : 'connect'; }
+    if (generation === connectGeneration) { connecting = false; btnConnect.textContent = connected ? t('disconnect') : t('connect'); }
   }
 }
 
@@ -259,15 +260,15 @@ hostSel.addEventListener('change', () => {
 btnStop.addEventListener('click', async () => {
   const target = hostSel.value;
   if (!target || connecting) return;
-  if (target === VIA_SPACE) { transcript.sys('a host reached over its Space is stopped on that host itself'); return; }
-  if (!confirm(`Stop pi-serverd on ${target}?\nRunning work on that host is aborted. It is started (and updated if needed) again on the next connect.`)) return;
+  if (target === VIA_SPACE) { transcript.sys(t('a host reached over its Space is stopped on that host itself')); return; }
+  if (!confirm(t('Stop pi-serverd on {target}?\nRunning work on that host is aborted. It is started (and updated if needed) again on the next connect.', { target }))) return;
   btnStop.disabled = true;
   try {
     connectGeneration++;
     resetUi();
-    transcript.sys(`stopping server on ${target}…`);
+    transcript.sys(t('stopping server on {target}…', { target }));
     const r = await post(API.remoteStop, { target });
-    transcript.sys(r.error ? `error: ${r.error}` : r.stopped ? 'remote server stopped' : 'remote server was not running');
+    transcript.sys(r.error ? t('error: {e}', { e: r.error }) : r.stopped ? t('remote server stopped') : t('remote server was not running'));
   } finally { btnStop.disabled = false; }
 });
 btnConnect.addEventListener('click', () => (connected || connecting ? disconnectHost() : connectHost()));
@@ -280,24 +281,24 @@ modelSel.addEventListener('change', async () => {
   try {
     const model = JSON.parse(modelSel.value);
     const r = await post(API.remoteModel, model);
-    if (!r.ok) transcript.sys(`error: ${r.error || 'could not change model'}`);
-  } catch { transcript.sys('error: invalid model selection'); }
+    if (!r.ok) transcript.sys(t('error: {e}', { e: r.error || t('could not change model') }));
+  } catch { transcript.sys(t('error: {e}', { e: t('invalid model selection') })); }
 });
 
 btnRename?.addEventListener('click', async () => {
   const id = sessSel.value;
   if (!id) return;
   const cur = sessSel.options[sessSel.selectedIndex]?.textContent || id;
-  const name = prompt('Rename session:', cur);
+  const name = prompt(t('Rename session:'), cur);
   if (name === null || name === cur) return;
   const r = await post(API.remoteRename, { id, name });
-  if (!r.ok) { transcript.sys(`error: ${r.error || 'rename failed'}`); return; }
+  if (!r.ok) { transcript.sys(t('error: {e}', { e: r.error || t('rename failed') })); return; }
   sessSel.options[sessSel.selectedIndex].textContent = name || id;
 });
 
 btnNew.addEventListener('click', async () => {
   const r = await post(API.remoteCreate, {});
-  if (!r.id) { transcript.sys(`error: ${r.error || 'could not create session'}`); return; }
+  if (!r.id) { transcript.sys(t('error: {e}', { e: r.error || t('could not create session') })); return; }
   const o = document.createElement('option');
   o.value = r.id;
   o.textContent = r.name || r.id;
@@ -308,9 +309,9 @@ btnNew.addEventListener('click', async () => {
 
 btnDelete.addEventListener('click', async () => {
   const id = sessSel.value;
-  if (!id || !confirm(`Stop and remove remote session ${id}?`)) return;
+  if (!id || !confirm(t('Stop and remove remote session {id}?', { id }))) return;
   const r = await post(API.remoteDelete, { id });
-  if (!r.ok) { transcript.sys(`error: ${r.error || 'could not remove session'}`); return; }
+  if (!r.ok) { transcript.sys(t('error: {e}', { e: r.error || t('could not remove session') })); return; }
   pollGeneration++;
   attachedId = null;
   transcript.clear();
@@ -321,11 +322,11 @@ btnDelete.addEventListener('click', async () => {
 
 btnAbort.addEventListener('click', async () => {
   const r = await post(API.remoteAbort, {});
-  if (r.error) transcript.sys(`error: ${r.error}`);
+  if (r.error) transcript.sys(t('error: {e}', { e: r.error }));
 });
 btnCompact.addEventListener('click', async () => {
   const r = await post(API.remoteCompact, {});
-  if (r.error) transcript.sys(`error: ${r.error}`);
+  if (r.error) transcript.sys(t('error: {e}', { e: r.error }));
 });
 
 composer.addEventListener('submit', async (e) => {

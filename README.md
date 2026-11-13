@@ -119,6 +119,12 @@ and grants. Client request fields cannot override either identity.
 - **Spaces-Steuerung** (`steuerung.html`) — admin control of runs, workers,
   spaces and deployment through the paired control connection (see below).
 
+Every page is in English and German. The button at the right end of the header (`EN`/`DE`) shows the page's language
+and switches to the other one; the choice is kept on the device (`localStorage` `pi-lang`). Without a choice the
+phone's system language decides (German for `de`, English otherwise). The texts are in `runtime/public/i18n.js` as
+English/German pairs; `runtime/test-i18n.mjs` fails when a page or script shows a text without both. The service
+notification and the start error page follow the system language.
+
 ## Spaces: functions and pages
 
 A **space** (phi-spaces) is a shared store of entries `{type, fields}`. Agents and programs write entries, read or
@@ -413,7 +419,7 @@ Volta, asdf and nodenv set `PATH` in `~/.bashrc` — through a prelude that sour
   `bin/phi-space-server` (the phone's space server, built by `prepare-runtime.py`, not committed),
   `space-examples/` (generated example CLI programs, optional),
   `public/` (chat, keys, sessions, clients, remote, terminal, spaces and
-  steuerung pages + shared menu), package.json for prod node_modules
+  steuerung pages + shared menu, `i18n.js` the English/German texts), package.json for prod node_modules
 - `test/` — `spaces-mobile.test.mjs` (mobile Spaces lifecycle and control bridge); `runtime/test-*.mjs` the
   offline runtime suite (`npm test` in `runtime/`)
 - `scripts/` — `prepare-runtime.py` (packaging, runs before every build), `remote-demo/` (device demo over WLAN)
@@ -582,6 +588,10 @@ the phone's chat.
 
 **App**
 
+- Every page in English and German: a language switch (`EN`/`DE`) in the header of every page, the choice kept on
+  the device, the system language as the default. All texts are English/German pairs in `runtime/public/i18n.js`;
+  `runtime/test-i18n.mjs` (part of `npm test`) checks that every text of the pages and scripts has both.
+  [App pages](#app-pages).
 - Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
   `chord`, `pi-coding-agent`, `pi-schema`).
 - Text on the phone is at least 16 px everywhere (form controls included); headings and the brand one step larger,
