@@ -1,5 +1,5 @@
 // The app's bridge on the phone, reached over adb (the same HTTP API its pages use): shared by phone.mjs and
-// phone-ssh.mjs (docs/remote-demo.md).
+// phone-ssh.mjs (docs/remote-demo.en.md).
 import { execFileSync } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';

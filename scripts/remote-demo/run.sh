@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remote-conversation demo over WLAN (docs/remote-demo.md): a LAN coordinator from phi-spaces, pi-serverd as the agent
+# Remote-conversation demo over WLAN (docs/remote-demo.en.md): a LAN coordinator from phi-spaces, pi-serverd as the agent
 # host with the scripted model (no model calls, no cost), and the phone driven over adb.
 #
 #   scripts/remote-demo/run.sh --device <adb-serial> --phone-ip <phone ip> [--lan 192.168.8.28]

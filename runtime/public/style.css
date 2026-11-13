@@ -255,7 +255,12 @@ button:active { filter: brightness(.82); }
   padding: 11px 13px; margin: 0 10px 8px;
 }
 .key-name  { flex: 1; font-weight: 600; font-size: 16px; }
-.key-hint  { color: var(--muted); font-family: monospace; font-size: 16px; }
+/* narrow rows: the name keeps up to 40 %, the hint takes the rest and is cut with … */
+.key-hint  { color: var(--muted); font-family: monospace; font-size: 16px; min-width: 0; flex: 1 1 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-name  { flex: 0 1 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-row button { flex-shrink: 0; white-space: nowrap; }
+#oauth-login { white-space: nowrap; flex-shrink: 0; }
+#oauth-provider { min-width: 0; flex: 1; }
 .key-del   { background: transparent; color: var(--danger); padding: 4px 8px; }
 .key-empty { color: var(--muted); padding: 10px 14px; font-size: 16px; }
 

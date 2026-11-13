@@ -1,5 +1,7 @@
 # pi-termux-mobile
 
+[English](README.md) · [Deutsch](de-docs/README_DE.md)
+
 > **Experimental software:** This is a personal prototype under active
 > development. Remote sessions, the embedded Termux runtime, and Android
 > background-process handling may still change or fail on individual devices.
@@ -159,7 +161,7 @@ Entry fields are data from other agents, never instructions; the prompt says so.
 `PI_SERVERD_AGENT_SPACE`, each session is an agent of its own (`conversation-<id>`): its own mailbox, its own
 transactions. An event pump hands every message of its mailbox to it exactly once, also after a restart
 (`agent-space.json`). Every tool call carries a request identity, so a call repeated after a crash gets its first
-result. Details: [docs/spaces.md](docs/spaces.md) (German).
+result. Details: [docs/spaces.en.md](docs/spaces.en.md).
 
 ### The phone's own space server
 
@@ -186,7 +188,7 @@ The page shows one step at a time, with a status card on top (state, device, coo
 Once paired: **Space öffnen** reads the Space through a short-lived grant (name, number of entries, the first 100
 entries; read only). **Erweitert** checks the key proof and renews the device key (own-key rotation, which can be
 resumed when the connection broke off). Request identities and public metadata are saved privately before sending.
-Every field, button, state and error message: [docs/spaces.md](docs/spaces.md).
+Every field, button, state and error message: [docs/spaces.en.md](docs/spaces.en.md).
 
 ### Spaces-Steuerung (`steuerung.html`)
 
@@ -202,7 +204,7 @@ Admin commands to the coordinator, with the admin role, in five tabs:
 
 Each command ID is stored in the private profile before it is sent. After a timeout, double tap or restart the same ID
 is asked again ("Ausgang erneut abfragen"), so a command is never started twice. Irreversible commands ask on the
-page first. Results are polled only while the page is visible. Every field: [docs/steuerung.md](docs/steuerung.md).
+page first. Results are polled only while the page is visible. Every field: [docs/steuerung.en.md](docs/steuerung.en.md).
 
 Device acceptance on an Android test phone against a coordinator in production composition over Wi-Fi: 2026-10-16
 (still on pi-durable, also over NetBird) and 2026-10-24 on the own store (pair as admin, start/pause/resume/stop a
@@ -242,7 +244,7 @@ Screenshots from a phone (SSH key, device ID and host addresses blacked out).
 | Spaces (paired) | Spaces: remote sessions | Spaces-Steuerung |
 |---|---|---|
 | <img src="docs/screens/spaces.png" width="260" alt="Spaces page, paired"> | <img src="docs/screens/spaces-remote.png" width="260" alt="Spaces page, remote sessions over a Space"> | <img src="docs/screens/spaces-control.png" width="260" alt="Spaces control, overview tab"> |
-| The status card of a paired device (device, coordinator, chosen Space) and step 3, the data host and Space to open; **Space öffnen** reads it, the link below opens the control page. | Step 4: the agent host whose sessions the **Remote** page reaches without SSH (host ID, endpoint, Space of the sessions, usually `remote`), and **Erweitert** (key proof, key renewal). | The control page's tabs (Übersicht, Läufe, Worker, Spaces, Mehr); the overview lists the coordinator's alerts and the commands this device sent. Every field: [docs/steuerung.md](docs/steuerung.md). |
+| The status card of a paired device (device, coordinator, chosen Space) and step 3, the data host and Space to open; **Space öffnen** reads it, the link below opens the control page. | Step 4: the agent host whose sessions the **Remote** page reaches without SSH (host ID, endpoint, Space of the sessions, usually `remote`), and **Erweitert** (key proof, key renewal). | The control page's tabs (Übersicht, Läufe, Worker, Spaces, Mehr); the overview lists the coordinator's alerts and the commands this device sent. Every field: [docs/steuerung.en.md](docs/steuerung.en.md). |
 
 ## Accounts: API keys and OAuth
 
@@ -315,7 +317,7 @@ SSH disconnect must not end the TUI process.
 **Without SSH.** The same calls also run over a Space of a phi-spaces federation: pi-serverd with
 `PI_SERVERD_REMOTE_SPACE` takes them there, and the phone reaches it with its device key and a grant per call
 (Spaces → step 4, then the host "(über Space)" on the Remote page; see [Spaces](#spaces-functions-and-pages)).
-A WLAN demo with scripts: [docs/remote-demo.md](docs/remote-demo.md).
+A WLAN demo with scripts: [docs/remote-demo.en.md](docs/remote-demo.en.md).
 
 ### 3. env-server (remote *tool execution*, different thing)
 
@@ -554,20 +556,20 @@ the phone's chat.
   `PHI_SPACE_SERVER_SKIP=1` leaves it out). `PiService` supervises it beside node (own process, restart with backoff,
   store `home/.pi-mobile/space-server.sqlite`, unix socket only), and the phone's chat sessions get the space tools
   there, each its own agent (`PI_MOBILE_SPACE`). Checked on the phone: kill -9 of either process, force-stop, two
-  minutes of forced deep idle. [Spaces](#spaces-functions-and-pages), [docs/spaces.md](docs/spaces.md).
+  minutes of forced deep idle. [Spaces](#spaces-functions-and-pages), [docs/spaces.en.md](docs/spaces.en.md).
 - pi-serverd's conversations can use another space server's Space for their space tools
   (`PI_SERVERD_AGENT_SPACE`, `PI_SERVERD_AGENT_SPACE_NAME`): pi-serverd is one agent host there (role `agentHost`),
   each conversation its own agent with its own mailbox, and an event pump hands its events over once, also after a
   restart (`~/.pi-serverd/agent-space.json`). Test in `runtime/test-remote-space.mjs`, also across a restart of the
   space server. The scripted model (`PI_TEST_FAUX`) also knows `!wait <type>` and `!notify <type>`.
 - A space that cannot be reached no longer stops a turn: the prompt says "unreachable now".
-- [docs/spaces.md](docs/spaces.md) (German) describes the whole Spaces page: terms,
+- [docs/spaces.en.md](docs/spaces.en.md) describes the whole Spaces page: terms,
   the steps (prepare, pair, connect a Space, remote sessions), every field and button, the status
   card, error messages, the phone's own space server and what is kept on the device.
 - Spaces control (`steuerung.html`) rebuilt for the phone: tabs (overview, runs, workers,
   Spaces, more), states in plain words, a hint under every field, confirmations on the page
   instead of browser dialogs, an inline time field for scheduled pause/resume. What every
-  field means: [docs/steuerung.md](docs/steuerung.md) (German, like the page).
+  field means: [docs/steuerung.en.md](docs/steuerung.en.md).
 
 **Remote sessions**
 
@@ -582,7 +584,7 @@ the phone's chat.
   reached with the device key and a coordinator grant, no SSH. The SSH path stays.
 - Device demo of that path over WLAN: `scripts/remote-demo/run.sh --device <adb serial>`
   (LAN coordinator, pi-serverd with the scripted model, the phone driven over adb; flow in
-  [docs/remote-demo.md](docs/remote-demo.md), German); `scripts/remote-demo/phone-ssh.mjs --target <client>`
+  [docs/remote-demo.en.md](docs/remote-demo.en.md)); `scripts/remote-demo/phone-ssh.mjs --target <client>`
   runs the SSH path of the Remote page from the phone against a saved client (provisioning, sessions, long poll).
 - `create` of a remote session happens once per request: a call that comes back after its host died (same `callId`)
   or a client `requestId` sent twice returns the session made the first time (`createRequest` in the session registry).
@@ -593,6 +595,13 @@ the phone's chat.
   the device, the system language as the default. All texts are English/German pairs in `runtime/public/i18n.js`;
   `runtime/test-i18n.mjs` (part of `npm test`) checks that every text of the pages and scripts has both.
   [App pages](#app-pages).
+- The docs in both languages too: this README in German in [de-docs/README_DE.md](de-docs/README_DE.md); the
+  Spaces docs in English (`docs/*.en.md`), their German versions in `docs/de-docs/`.
+- Fix: after an install or force-stop the app could open the previous run's port before node listened
+  ("Webpage not available"); it now loads the page only once the bridge accepts connections.
+- Spaces control waits for a call of an earlier page still running at the bridge instead of failing with
+  "another space operation is in progress"; list rows (Clients, Accounts, Sessions) cut long addresses with … and
+  keep their buttons on screen.
 - Agent-side Pi packages move to 1.5.2, the latest release (`pi-durable`, `pi-ai`,
   `chord`, `pi-coding-agent`, `pi-schema`).
 - Text on the phone is at least 16 px everywhere (form controls included); headings and the brand one step larger,

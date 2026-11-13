@@ -247,6 +247,7 @@ const PAIRS = [
   ['Paired: the coordinator has taken the device in.', 'Gekoppelt: Der Koordinator hat das Gerät aufgenommen.'],
   ['Pairing still open (state: {state}). Check again later.', 'Kopplung noch offen (Stand: {state}). Später erneut prüfen.'],
   ['Running …', 'Läuft …'],
+  ['Another request of this device is still running. Try again in a moment.', 'Eine andere Anfrage dieses Geräts läuft noch. Gleich noch einmal versuchen.'],
   ['Done.', 'Erledigt.'],
   ['Please paste the pairing code.', 'Bitte den Kopplungscode einfügen.'],
   ['The QR content belongs to another coordinator than the prepared one.', 'Der QR-Inhalt gehört zu einem anderen Koordinator als dem vorbereiteten.'],

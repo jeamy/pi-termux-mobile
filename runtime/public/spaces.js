@@ -53,6 +53,7 @@ function showSpace(result) {
 /** The server's words, a little plainer. */
 const plain = (m) => String(m)
   .replace(/^use tcp:\/\/OVERLAY-IP:PORT$/, () => t('Give the endpoint as tcp://ADDRESS:PORT, on Wi-Fi e.g. tcp://192.168.8.28:4100.'))
+  .replace(/.*another space operation is in progress.*/, () => t('Another request of this device is still running. Try again in a moment.'))
   .replace(/.*ECONNREFUSED.*/, () => t('No connection: is the coordinator running, and is the device on the same Wi-Fi?'))
   .replace(/.*(ETIMEDOUT|EHOSTUNREACH|ENETUNREACH).*/, () => t('Address not reachable: is the device on the same Wi-Fi?'));
 

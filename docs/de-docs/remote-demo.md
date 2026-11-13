@@ -1,5 +1,7 @@
 # Demo: Remote-Sitzungen über einen Space, im WLAN
 
+[English](../remote-demo.en.md) · [Deutsch](remote-demo.md)
+
 Diese Demo prüft den Weg „Remote über Space“ (siehe [spaces.md](spaces.md), Abschnitt 4) auf einem echten Handy. Sie
 läuft über das WLAN, ohne SSH, und braucht kein Modell. Folgende Teile sind echt: der Schlüssel des Handys im Android
 Keystore, die Laufzeit der App auf dem Handy, der Netzweg vom Handy zum Rechner, der Gate mit Schlüsselbeweis und die
@@ -92,7 +94,7 @@ Beispielausgabe (gekürzt):
 
 ```
 ▸ key proof at the coordinator
-{"authenticated":true,"keyId":"f0b3783dd8da2a1fd10bb5bc0659c542","peerId":"phone-b9"}
+{"authenticated":true,"keyId":"…","peerId":"phone-b9"}
 ▸ Remote: connect over the Space (key proof at the agent host, a grant per call; no SSH)
 connected to b9-coord; sessions: []
 session 2 created and chosen

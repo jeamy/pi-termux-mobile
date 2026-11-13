@@ -1,5 +1,7 @@
 # Die Spaces-Seite
 
+[English](../spaces.en.md) · [Deutsch](spaces.md)
+
 Unter **Spaces** (unterste Leiste) verbindet sich das Handy mit einer **phi-spaces-Föderation**: einem Verbund von
 Hosts, die gemeinsam Spaces halten (Ablagen für Einträge, Aufgaben und Ergebnisse). Die Seite hat zwei Teile:
 

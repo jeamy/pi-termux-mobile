@@ -9,6 +9,7 @@ import android.webkit.WebViewClient;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 
 public final class MainActivity extends Activity {
 
@@ -68,6 +69,15 @@ public final class MainActivity extends Activity {
         try { waitForBridgeOnce(); } finally { waiting.set(false); }
     }
 
+    private static boolean listening(int port) {
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 300);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private void waitForBridgeOnce() {
         // server.mjs writes under $HOME/.pi-mobile (HOME == files/home)
         File stateDir = new File(new File(getFilesDir(), "home"), ".pi-mobile");
@@ -79,7 +89,8 @@ public final class MainActivity extends Activity {
                 if (portFile.isFile() && tokenFile.isFile()) {
                     String port = readAll(portFile).trim();
                     String token = readAll(tokenFile).trim();
-                    if (!port.isEmpty()) {
+                    // the port file may be the previous run's: load only once the bridge accepts connections
+                    if (!port.isEmpty() && listening(Integer.parseInt(port))) {
                         String url = "http://127.0.0.1:" + port + "/?token=" + token;
                         runOnUiThread(() -> webView.loadUrl(url));
                         return;

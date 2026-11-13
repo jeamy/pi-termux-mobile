@@ -1,5 +1,7 @@
 # Spaces-Steuerung: Läufe, Worker und Vorgänge
 
+[English](../steuerung.en.md) · [Deutsch](steuerung.md)
+
 Die Seite **Spaces-Steuerung** (`runtime/public/steuerung.html`, im Menü unter „Spaces“ → „Läufe, Worker und
 Vorgänge steuern“) bedient eine phi-spaces-Föderation vom Handy aus. Sie schickt **Admin-Aufträge** an den
 **Koordinator**, also an den Kontroll-Host, mit dem das Gerät unter „Spaces“ gekoppelt ist. Das Handy selbst rechnet

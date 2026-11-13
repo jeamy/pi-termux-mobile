@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Remote-conversation demo, the phone's part (docs/remote-demo.md). Drives the app's own bridge on the phone
+// Remote-conversation demo, the phone's part (docs/remote-demo.en.md). Drives the app's own bridge on the phone
 // (the same HTTP API its pages use) over `adb forward`: pairs the phone with the LAN coordinator, stores the agent
 // host, connects the Remote page's state over the Space and runs one prompt. The phone's Android Keystore key, its
 // runtime and its network path to the coordinator are the real ones; no page is touched.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The SSH path of the Remote page on a real phone and a real host (docs/remote-demo.md): drives the app's bridge over
+// The SSH path of the Remote page on a real phone and a real host (docs/remote-demo.en.md): drives the app's bridge over
 // adb like the page does. Connects to a saved client over SSH, which sets up or updates pi-serverd on the host when
 // needed, then lists, creates, attaches, reads state, history and an idle events long poll, renames and deletes a
 // session of its own. No model is called unless --prompt is given (the host's own credentials, it may cost tokens).

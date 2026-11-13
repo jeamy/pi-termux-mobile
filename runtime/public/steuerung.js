@@ -1,5 +1,5 @@
 // Runs, workers and operations through admin commands (docs/betrieb-und-mobile-steuerung.en.md §7.2 in phi-spaces;
-// what each field means: docs/steuerung.md here). Every action keeps its command ID; polling runs only while the page
+// what each field means: docs/steuerung.en.md here). Every action keeps its command ID; polling runs only while the page
 // is visible; data is rendered as text only. Confirmations are shown on the page, never as browser dialogs.
 import { lang, locale, t } from './i18n.js';
 import { renderMenu } from './menu.js';
@@ -62,12 +62,20 @@ function ask(box, text, yes = t('Yes, run it')) {
 let queue = Promise.resolve();
 function api(method, body = {}) { const next = queue.then(() => request(method, body)); queue = next.catch(() => {}); return next; }
 async function request(method, body) {
+  // the bridge may still be busy with a call of an earlier page (e.g. before a reload): wait for it instead of failing
+  for (let i = 0; ; i++) {
+    try { return await requestOnce(method, body); }
+    catch (e) { if (i >= 30 || !/another space operation is in progress/.test(e.message)) throw e; await sleep(1000); }
+  }
+}
+async function requestOnce(method, body) {
   const response = await fetch('/api/spaces/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-token': token }, body: JSON.stringify(body) });
   const reply = await response.json(); if (!response.ok || reply.error) throw new Error(reply.error || 'HTTP ' + response.status); return reply;
 }
 /** The server's words, a little plainer. */
 const plain = (m) => String(m)
   .replace(/.*not paired.*|.*no profile.*/i, () => t('The device is not paired yet. Pair it under “Spaces” first.'))
+  .replace(/.*another space operation is in progress.*/, () => t('Another request of this device is still running. Try again in a moment.'))
   .replace(/.*ECONNREFUSED.*/, () => t('No connection to the coordinator: is it running, and is the device on the same network?'))
   .replace(/.*(ETIMEDOUT|EHOSTUNREACH|ENETUNREACH).*/, () => t('Coordinator not reachable: is the device on the same network?'));
 
